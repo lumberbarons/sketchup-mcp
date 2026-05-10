@@ -52,4 +52,13 @@ class TestDetermineClosestFace < Minitest::Test
     assert_equal :south, closest(0, -1, 1)
   end
 
+  # Known-suboptimal-but-locked: a zero direction vector is degenerate
+  # (concentric mortise/tenon boards) and there is no meaningful "closest
+  # face." The if/elsif chain falls into the x-dominant branch on the
+  # all-zero tie, and `0 > 0` is false, so production returns :west. Pin
+  # this so any future change to raise or pick a different face has to be
+  # deliberate.
+  def test_zero_vector_returns_west
+    assert_equal :west, closest(0, 0, 0)
+  end
 end
