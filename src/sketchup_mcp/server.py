@@ -120,6 +120,26 @@ def _client(ctx: Context) -> SketchupClient:
     """Get the SketchupClient injected by the lifespan."""
     return ctx.request_context.lifespan_context["sketchup"]
 
+
+def _call_sketchup(ctx: Context, ruby_tool: str, arguments: Dict[str, Any]) -> str:
+    """Forward a tool call to the SketchUp Ruby server.
+
+    Returns a JSON-encoded envelope with the same shape for every tool:
+      success: bool
+      result:  opaque payload from SketchUp on success, null on failure
+      error:   error message string on failure, null on success
+    """
+    try:
+        result = _client(ctx).send_command(
+            method="tools/call",
+            params={"name": ruby_tool, "arguments": arguments},
+            request_id=ctx.request_id,
+        )
+        return json.dumps({"success": True, "result": result, "error": None})
+    except Exception as e:
+        logger.exception("tool %s failed", ruby_tool)
+        return json.dumps({"success": False, "result": None, "error": str(e)})
+
 # Create MCP server with lifespan support
 mcp = FastMCP(
     "SketchupMCP",
@@ -127,62 +147,27 @@ mcp = FastMCP(
     lifespan=server_lifespan
 )
 
-# Tool endpoints
+# Tool endpoints — each one declares its parameters and forwards to _call_sketchup.
 @mcp.tool()
 def create_component(
     ctx: Context,
     type: str = "cube",
     position: Optional[List[float]] = None,
-    dimensions: Optional[List[float]] = None
+    dimensions: Optional[List[float]] = None,
 ) -> str:
     """Create a new component in Sketchup"""
-    try:
-        logger.info(f"create_component called with type={type}, position={position}, dimensions={dimensions}, request_id={ctx.request_id}")
-        
-        sketchup = _client(ctx)
-        
-        params = {
-            "name": "create_component",
-            "arguments": {
-                "type": type,
-                "position": position or [0,0,0],
-                "dimensions": dimensions or [1,1,1]
-            }
-        }
-        
-        logger.info(f"Calling send_command with method='tools/call', params={params}, request_id={ctx.request_id}")
-        
-        result = sketchup.send_command(
-            method="tools/call",
-            params=params,
-            request_id=ctx.request_id
-        )
-        
-        logger.info(f"create_component result: {result}")
-        return json.dumps(result)
-    except Exception as e:
-        logger.error(f"Error in create_component: {str(e)}")
-        return f"Error creating component: {str(e)}"
+    return _call_sketchup(ctx, "create_component", {
+        "type": type,
+        "position": position if position is not None else [0, 0, 0],
+        "dimensions": dimensions if dimensions is not None else [1, 1, 1],
+    })
+
 
 @mcp.tool()
-def delete_component(
-    ctx: Context,
-    id: str
-) -> str:
+def delete_component(ctx: Context, id: str) -> str:
     """Delete a component by ID"""
-    try:
-        sketchup = _client(ctx)
-        result = sketchup.send_command(
-            method="tools/call",
-            params={
-                "name": "delete_component",
-                "arguments": {"id": id}
-            },
-            request_id=ctx.request_id
-        )
-        return json.dumps(result)
-    except Exception as e:
-        return f"Error deleting component: {str(e)}"
+    return _call_sketchup(ctx, "delete_component", {"id": id})
+
 
 @mcp.tool()
 def transform_component(
@@ -190,93 +175,36 @@ def transform_component(
     id: str,
     position: Optional[List[float]] = None,
     rotation: Optional[List[float]] = None,
-    scale: Optional[List[float]] = None
+    scale: Optional[List[float]] = None,
 ) -> str:
     """Transform a component's position, rotation, or scale"""
-    try:
-        sketchup = _client(ctx)
-        arguments = {"id": id}
-        if position is not None:
-            arguments["position"] = position
-        if rotation is not None:
-            arguments["rotation"] = rotation
-        if scale is not None:
-            arguments["scale"] = scale
-            
-        result = sketchup.send_command(
-            method="tools/call",
-            params={
-                "name": "transform_component",
-                "arguments": arguments
-            },
-            request_id=ctx.request_id
-        )
-        return json.dumps(result)
-    except Exception as e:
-        return f"Error transforming component: {str(e)}"
+    arguments: Dict[str, Any] = {"id": id}
+    if position is not None:
+        arguments["position"] = position
+    if rotation is not None:
+        arguments["rotation"] = rotation
+    if scale is not None:
+        arguments["scale"] = scale
+    return _call_sketchup(ctx, "transform_component", arguments)
+
 
 @mcp.tool()
 def get_selection(ctx: Context) -> str:
     """Get currently selected components"""
-    try:
-        sketchup = _client(ctx)
-        result = sketchup.send_command(
-            method="tools/call",
-            params={
-                "name": "get_selection",
-                "arguments": {}
-            },
-            request_id=ctx.request_id
-        )
-        return json.dumps(result)
-    except Exception as e:
-        return f"Error getting selection: {str(e)}"
+    return _call_sketchup(ctx, "get_selection", {})
+
 
 @mcp.tool()
-def set_material(
-    ctx: Context,
-    id: str,
-    material: str
-) -> str:
+def set_material(ctx: Context, id: str, material: str) -> str:
     """Set material for a component"""
-    try:
-        sketchup = _client(ctx)
-        result = sketchup.send_command(
-            method="tools/call",
-            params={
-                "name": "set_material",
-                "arguments": {
-                    "id": id,
-                    "material": material
-                }
-            },
-            request_id=ctx.request_id
-        )
-        return json.dumps(result)
-    except Exception as e:
-        return f"Error setting material: {str(e)}"
+    return _call_sketchup(ctx, "set_material", {"id": id, "material": material})
+
 
 @mcp.tool()
-def export_scene(
-    ctx: Context,
-    format: str = "skp"
-) -> str:
+def export_scene(ctx: Context, format: str = "skp") -> str:
     """Export the current scene"""
-    try:
-        sketchup = _client(ctx)
-        result = sketchup.send_command(
-            method="tools/call",
-            params={
-                "name": "export",
-                "arguments": {
-                    "format": format
-                }
-            },
-            request_id=ctx.request_id
-        )
-        return json.dumps(result)
-    except Exception as e:
-        return f"Error exporting scene: {str(e)}"
+    return _call_sketchup(ctx, "export", {"format": format})
+
 
 @mcp.tool()
 def create_mortise_tenon(
@@ -288,37 +216,20 @@ def create_mortise_tenon(
     depth: float = 1.0,
     offset_x: float = 0.0,
     offset_y: float = 0.0,
-    offset_z: float = 0.0
+    offset_z: float = 0.0,
 ) -> str:
     """Create a mortise and tenon joint between two components"""
-    try:
-        logger.info(f"create_mortise_tenon called with mortise_id={mortise_id}, tenon_id={tenon_id}, width={width}, height={height}, depth={depth}, offsets=({offset_x}, {offset_y}, {offset_z})")
-        
-        sketchup = _client(ctx)
-        
-        result = sketchup.send_command(
-            method="tools/call",
-            params={
-                "name": "create_mortise_tenon",
-                "arguments": {
-                    "mortise_id": mortise_id,
-                    "tenon_id": tenon_id,
-                    "width": width,
-                    "height": height,
-                    "depth": depth,
-                    "offset_x": offset_x,
-                    "offset_y": offset_y,
-                    "offset_z": offset_z
-                }
-            },
-            request_id=ctx.request_id
-        )
-        
-        logger.info(f"create_mortise_tenon result: {result}")
-        return json.dumps(result)
-    except Exception as e:
-        logger.error(f"Error in create_mortise_tenon: {str(e)}")
-        return f"Error creating mortise and tenon joint: {str(e)}"
+    return _call_sketchup(ctx, "create_mortise_tenon", {
+        "mortise_id": mortise_id,
+        "tenon_id": tenon_id,
+        "width": width,
+        "height": height,
+        "depth": depth,
+        "offset_x": offset_x,
+        "offset_y": offset_y,
+        "offset_z": offset_z,
+    })
+
 
 @mcp.tool()
 def create_dovetail(
@@ -332,39 +243,22 @@ def create_dovetail(
     num_tails: int = 3,
     offset_x: float = 0.0,
     offset_y: float = 0.0,
-    offset_z: float = 0.0
+    offset_z: float = 0.0,
 ) -> str:
     """Create a dovetail joint between two components"""
-    try:
-        logger.info(f"create_dovetail called with tail_id={tail_id}, pin_id={pin_id}, width={width}, height={height}, depth={depth}, angle={angle}, num_tails={num_tails}")
-        
-        sketchup = _client(ctx)
-        
-        result = sketchup.send_command(
-            method="tools/call",
-            params={
-                "name": "create_dovetail",
-                "arguments": {
-                    "tail_id": tail_id,
-                    "pin_id": pin_id,
-                    "width": width,
-                    "height": height,
-                    "depth": depth,
-                    "angle": angle,
-                    "num_tails": num_tails,
-                    "offset_x": offset_x,
-                    "offset_y": offset_y,
-                    "offset_z": offset_z
-                }
-            },
-            request_id=ctx.request_id
-        )
-        
-        logger.info(f"create_dovetail result: {result}")
-        return json.dumps(result)
-    except Exception as e:
-        logger.error(f"Error in create_dovetail: {str(e)}")
-        return f"Error creating dovetail joint: {str(e)}"
+    return _call_sketchup(ctx, "create_dovetail", {
+        "tail_id": tail_id,
+        "pin_id": pin_id,
+        "width": width,
+        "height": height,
+        "depth": depth,
+        "angle": angle,
+        "num_tails": num_tails,
+        "offset_x": offset_x,
+        "offset_y": offset_y,
+        "offset_z": offset_z,
+    })
+
 
 @mcp.tool()
 def create_finger_joint(
@@ -377,76 +271,26 @@ def create_finger_joint(
     num_fingers: int = 5,
     offset_x: float = 0.0,
     offset_y: float = 0.0,
-    offset_z: float = 0.0
+    offset_z: float = 0.0,
 ) -> str:
     """Create a finger joint (box joint) between two components"""
-    try:
-        logger.info(f"create_finger_joint called with board1_id={board1_id}, board2_id={board2_id}, width={width}, height={height}, depth={depth}, num_fingers={num_fingers}")
-        
-        sketchup = _client(ctx)
-        
-        result = sketchup.send_command(
-            method="tools/call",
-            params={
-                "name": "create_finger_joint",
-                "arguments": {
-                    "board1_id": board1_id,
-                    "board2_id": board2_id,
-                    "width": width,
-                    "height": height,
-                    "depth": depth,
-                    "num_fingers": num_fingers,
-                    "offset_x": offset_x,
-                    "offset_y": offset_y,
-                    "offset_z": offset_z
-                }
-            },
-            request_id=ctx.request_id
-        )
-        
-        logger.info(f"create_finger_joint result: {result}")
-        return json.dumps(result)
-    except Exception as e:
-        logger.error(f"Error in create_finger_joint: {str(e)}")
-        return f"Error creating finger joint: {str(e)}"
+    return _call_sketchup(ctx, "create_finger_joint", {
+        "board1_id": board1_id,
+        "board2_id": board2_id,
+        "width": width,
+        "height": height,
+        "depth": depth,
+        "num_fingers": num_fingers,
+        "offset_x": offset_x,
+        "offset_y": offset_y,
+        "offset_z": offset_z,
+    })
+
 
 @mcp.tool()
-def eval_ruby(
-    ctx: Context,
-    code: str
-) -> str:
+def eval_ruby(ctx: Context, code: str) -> str:
     """Evaluate arbitrary Ruby code in Sketchup"""
-    try:
-        logger.info(f"eval_ruby called with code length: {len(code)}")
-        
-        sketchup = _client(ctx)
-        
-        result = sketchup.send_command(
-            method="tools/call",
-            params={
-                "name": "eval_ruby",
-                "arguments": {
-                    "code": code
-                }
-            },
-            request_id=ctx.request_id
-        )
-        
-        logger.info(f"eval_ruby result: {result}")
-        
-        # Format the response to include the result
-        response = {
-            "success": True,
-            "result": result.get("content", [{"text": "Success"}])[0].get("text", "Success") if isinstance(result.get("content"), list) and len(result.get("content", [])) > 0 else "Success"
-        }
-        
-        return json.dumps(response)
-    except Exception as e:
-        logger.error(f"Error in eval_ruby: {str(e)}")
-        return json.dumps({
-            "success": False,
-            "error": str(e)
-        })
+    return _call_sketchup(ctx, "eval_ruby", {"code": code})
 
 def main():
     mcp.run()
