@@ -244,6 +244,45 @@ def transform_component(
 
 
 @mcp.tool()
+def find_groups(
+    ctx: Context,
+    name_prefix: str | None = None,
+    name_pattern: str | None = None,
+    in_bounds: dict[str, list[float]] | None = None,
+    parent_id: int | None = None,
+    limit: int = 200,
+    include_components: bool = False,
+) -> str:
+    """Query existing groups in the active model.
+
+    All filters combine with AND. Returns a list of matches, each with
+    `{id, name, bounds: {min, max}, layer, material}`, plus a `truncated`
+    flag indicating whether the `limit` cap was hit.
+
+    name_prefix: match groups whose name starts with this prefix.
+    name_pattern: Ruby regex (as a string) matched against the group name.
+        Mutually exclusive with `name_prefix`.
+    in_bounds: {"min": [x,y,z], "max": [x,y,z]} (inches). Match groups whose
+        bounds *intersect* this AABB — not strict containment.
+    parent_id: restrict to children of a specific group (nested models).
+        Top-level entities are searched if omitted. Non-group IDs error.
+    limit: hard cap on results (default 200). `truncated: true` if reached.
+    include_components: also include `Sketchup::ComponentInstance` (default
+        is Groups only, matching this project's convention).
+    """
+    arguments: dict[str, Any] = {"limit": limit, "include_components": include_components}
+    if name_prefix is not None:
+        arguments["name_prefix"] = name_prefix
+    if name_pattern is not None:
+        arguments["name_pattern"] = name_pattern
+    if in_bounds is not None:
+        arguments["in_bounds"] = in_bounds
+    if parent_id is not None:
+        arguments["parent_id"] = parent_id
+    return _call_sketchup(ctx, "find_groups", arguments)
+
+
+@mcp.tool()
 def get_selection(ctx: Context) -> str:
     """Get currently selected components"""
     return _call_sketchup(ctx, "get_selection", {})

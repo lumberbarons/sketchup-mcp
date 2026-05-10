@@ -86,7 +86,7 @@ def envelope(text_content_result: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-async def test_all_ten_tools_are_registered(fake: FakeSketchupClient) -> None:
+async def test_every_tool_is_registered(fake: FakeSketchupClient) -> None:
     async with make_session() as session:
         listed = await session.list_tools()
     names = {t.name for t in listed.tools}
@@ -94,6 +94,7 @@ async def test_all_ten_tools_are_registered(fake: FakeSketchupClient) -> None:
         "create_component",
         "delete_component",
         "transform_component",
+        "find_groups",
         "get_selection",
         "set_material",
         "export_scene",
@@ -374,6 +375,12 @@ async def test_transform_component_forwards_both_when_both_given(
             "eval_ruby",
             {"code": "1+1"},
         ),
+        (
+            "find_groups",
+            {},  # no filters — defaults forwarded
+            "find_groups",
+            {"limit": 200, "include_components": False},
+        ),
     ],
 )
 async def test_tool_forwards_expected_arguments(
@@ -403,3 +410,113 @@ async def test_eval_ruby_round_trip(fake: FakeSketchupClient) -> None:
     assert fake.last_tool_name == "eval_ruby"
     assert fake.last_arguments == {"code": "6 * 7"}
     assert envelope(result) == {"success": True, "result": "42", "error": None}
+
+
+# ---------------------------------------------------------------------------
+# find_groups — each filter must be forwarded under the right key. Filtering
+# logic itself lives in Ruby (see su_mcp/test/test_find_groups_filters.rb);
+# these tests pin the wire shape so a rename or dropped key can't slip past.
+# ---------------------------------------------------------------------------
+
+
+async def test_find_groups_forwards_name_prefix(fake: FakeSketchupClient) -> None:
+    async with make_session() as session:
+        await session.call_tool("find_groups", {"name_prefix": "WA "})
+    assert fake.last_tool_name == "find_groups"
+    assert fake.last_arguments == {
+        "name_prefix": "WA ",
+        "limit": 200,
+        "include_components": False,
+    }
+
+
+async def test_find_groups_forwards_name_pattern(fake: FakeSketchupClient) -> None:
+    async with make_session() as session:
+        await session.call_tool("find_groups", {"name_pattern": r"^Rafter [WE] \d+$"})
+    assert fake.last_arguments == {
+        "name_pattern": r"^Rafter [WE] \d+$",
+        "limit": 200,
+        "include_components": False,
+    }
+
+
+async def test_find_groups_forwards_in_bounds_positive(
+    fake: FakeSketchupClient,
+) -> None:
+    """A typical 'what's near the door RO?' query — bounds intersection.
+    Pinning the exact wire shape protects the Ruby-side parser."""
+    async with make_session() as session:
+        await session.call_tool(
+            "find_groups",
+            {"in_bounds": {"min": [38, 0, 0], "max": [82, 3.5, 95]}},
+        )
+    assert fake.last_arguments == {
+        "in_bounds": {"min": [38, 0, 0], "max": [82, 3.5, 95]},
+        "limit": 200,
+        "include_components": False,
+    }
+
+
+async def test_find_groups_forwards_in_bounds_negative_aabb(
+    fake: FakeSketchupClient,
+) -> None:
+    """A negative-coordinate AABB must round-trip unchanged — bounds are
+    inches in SketchUp's coordinate system and routinely go negative."""
+    async with make_session() as session:
+        await session.call_tool(
+            "find_groups",
+            {"in_bounds": {"min": [-10, -10, -10], "max": [-1, -1, -1]}},
+        )
+    assert fake.last_arguments["in_bounds"] == {
+        "min": [-10, -10, -10],
+        "max": [-1, -1, -1],
+    }
+
+
+async def test_find_groups_forwards_combined_filters(
+    fake: FakeSketchupClient,
+) -> None:
+    async with make_session() as session:
+        await session.call_tool(
+            "find_groups",
+            {
+                "name_prefix": "WA ",
+                "in_bounds": {"min": [0, 0, 0], "max": [100, 100, 100]},
+                "parent_id": 42,
+                "limit": 10,
+                "include_components": True,
+            },
+        )
+    assert fake.last_arguments == {
+        "name_prefix": "WA ",
+        "in_bounds": {"min": [0, 0, 0], "max": [100, 100, 100]},
+        "parent_id": 42,
+        "limit": 10,
+        "include_components": True,
+    }
+
+
+async def test_find_groups_forwards_truncation_limit(
+    fake: FakeSketchupClient,
+) -> None:
+    async with make_session() as session:
+        await session.call_tool("find_groups", {"limit": 5})
+    assert fake.last_arguments["limit"] == 5
+
+
+async def test_find_groups_forwards_include_components(
+    fake: FakeSketchupClient,
+) -> None:
+    async with make_session() as session:
+        await session.call_tool("find_groups", {"include_components": True})
+    assert fake.last_arguments["include_components"] is True
+
+
+async def test_find_groups_omits_unset_filters(fake: FakeSketchupClient) -> None:
+    """A bare call must not leak null filter keys onto the wire — the Ruby
+    side branches on key presence (`params.key?("name_prefix")`)."""
+    async with make_session() as session:
+        await session.call_tool("find_groups", {})
+    assert fake.last_arguments == {"limit": 200, "include_components": False}
+    for key in ("name_prefix", "name_pattern", "in_bounds", "parent_id"):
+        assert key not in fake.last_arguments, f"unset {key} must be omitted"

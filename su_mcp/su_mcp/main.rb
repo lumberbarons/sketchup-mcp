@@ -224,6 +224,8 @@ module SU_MCP
           delete_component(args)
         when "transform_component"
           transform_component(args)
+        when "find_groups"
+          find_groups(args)
         when "get_selection"
           get_selection
         when "export", "export_scene"
@@ -610,6 +612,102 @@ module SU_MCP
       end
 
       bounds_result(entity)
+    end
+
+    def find_groups(params)
+      log "find_groups params: #{params.inspect}"
+
+      has_prefix = params.key?("name_prefix") && !params["name_prefix"].nil?
+      has_pattern = params.key?("name_pattern") && !params["name_pattern"].nil?
+      raise "Provide at most one of 'name_prefix' or 'name_pattern'" if has_prefix && has_pattern
+
+      prefix = has_prefix ? params["name_prefix"].to_s : nil
+      pattern = has_pattern ? Regexp.new(params["name_pattern"].to_s) : nil
+      in_bounds = params["in_bounds"]
+      limit = (params["limit"] || 200).to_i
+      include_components = params["include_components"] ? true : false
+
+      model = Sketchup.active_model
+      entities = resolve_search_root(model, params["parent_id"])
+
+      matched = []
+      truncated = false
+      entities.each do |entity|
+        next unless entity_matches_kind?(entity, include_components)
+        next unless name_matches?(entity.name, prefix, pattern)
+        next unless bounds_matches?(entity.bounds, in_bounds)
+
+        if matched.length >= limit
+          truncated = true
+          break
+        end
+        matched << describe_match(entity)
+      end
+
+      { success: true, groups: matched, truncated: truncated }
+    end
+
+    def resolve_search_root(model, parent_id)
+      return model.entities if parent_id.nil?
+
+      parent = model.find_entity_by_id(parent_id.to_i)
+      raise "Entity not found: #{parent_id}" unless parent
+      unless parent.is_a?(Sketchup::Group)
+        raise "parent_id #{parent_id} is not a Group (got #{parent.class})"
+      end
+      parent.entities
+    end
+
+    # Pure: does `entity` count as a hit given the kind filter? Groups
+    # always do; ComponentInstances only when explicitly opted in.
+    def entity_matches_kind?(entity, include_components)
+      return true if entity.is_a?(Sketchup::Group)
+      return true if include_components && entity.is_a?(Sketchup::ComponentInstance)
+      false
+    end
+
+    # Pure: name passes if either no filter, prefix matches, or regex matches.
+    # prefix and pattern are mutually exclusive at the caller — passing both
+    # would be a caller bug, not handled here.
+    def name_matches?(name, prefix, pattern)
+      return name.to_s.start_with?(prefix) if prefix
+      return pattern.match?(name.to_s) if pattern
+      true
+    end
+
+    # Pure AABB intersection: two boxes intersect iff they overlap on every
+    # axis. `in_bounds` is the query box ({"min": [x,y,z], "max": [x,y,z]});
+    # `entity_bounds` exposes .min and .max as objects with .x/.y/.z.
+    # Touch-only contact (max == min on an axis) counts as intersecting —
+    # consistent with SketchUp's own BoundingBox#intersect.
+    def bounds_matches?(entity_bounds, in_bounds)
+      return true if in_bounds.nil?
+
+      qmin = in_bounds["min"]
+      qmax = in_bounds["max"]
+      emin = entity_bounds.min
+      emax = entity_bounds.max
+      return false if emax.x < qmin[0] || emin.x > qmax[0]
+      return false if emax.y < qmin[1] || emin.y > qmax[1]
+      return false if emax.z < qmin[2] || emin.z > qmax[2]
+      true
+    end
+
+    def describe_match(entity)
+      bmin = entity.bounds.min
+      bmax = entity.bounds.max
+      layer = entity.respond_to?(:layer) && entity.layer ? entity.layer.name : nil
+      material = entity.respond_to?(:material) && entity.material ? entity.material.display_name : nil
+      {
+        id: entity.entityID,
+        name: entity.name,
+        bounds: {
+          min: [bmin.x.to_f, bmin.y.to_f, bmin.z.to_f],
+          max: [bmax.x.to_f, bmax.y.to_f, bmax.z.to_f]
+        },
+        layer: layer,
+        material: material
+      }
     end
 
     def get_selection

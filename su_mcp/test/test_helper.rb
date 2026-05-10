@@ -23,6 +23,14 @@ unless defined?(Sketchup::Group)
   end
 end
 
+# Same trick for ComponentInstance — find_groups checks is_a? against it
+# under the include_components flag.
+unless defined?(Sketchup::ComponentInstance)
+  module Sketchup
+    class ComponentInstance; end
+  end
+end
+
 unless defined?(UI)
   module UI
     def self.start_timer(*); end

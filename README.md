@@ -98,6 +98,7 @@ Once connected, Claude can interact with Sketchup using the following capabiliti
 * `create_component` - Create a new component with specified type, position, and dimensions
 * `delete_component` - Remove a component from the scene by entity ID or top-level group name
 * `transform_component` - Move, rotate, or scale a component, addressed by entity ID or top-level group name
+* `find_groups` - Query the model for groups by name prefix, regex, bounds intersection, or parent
 * `get_selection` - Get information about currently selected components
 * `set_material` - Apply a material or color to a component
 * `export_scene` - Export the current scene (default format: `skp`)
@@ -105,6 +106,26 @@ Once connected, Claude can interact with Sketchup using the following capabiliti
 * `create_dovetail` - Create a dovetail joint between two components
 * `create_finger_joint` - Create a finger (box) joint between two components
 * `eval_ruby` - Execute arbitrary Ruby code in SketchUp for advanced operations
+
+#### Discovering existing geometry
+
+`find_groups` answers "what's already in the model?" without round-tripping through `eval_ruby`. Filters combine with AND; each match comes back with `id`, `name`, `bounds`, `layer`, and `material`. A `truncated: true` flag indicates results were capped at `limit` (default 200).
+
+Typical queries:
+
+* All Wall A pieces: `find_groups({"name_prefix": "WA "})`
+* Just the common rafters (excluding doubled/fly rafters): `find_groups({"name_pattern": "^Rafter [WE] \\d+$"})`
+* Everything that intersects the door rough-opening volume on Wall A: `find_groups({"in_bounds": {"min": [38, 0, 0], "max": [82, 3.5, 95]}})`
+
+Compose with the name-based mutate ops to operate on the model without tracking IDs:
+
+```text
+find_groups({"name_prefix": "WA "})       # list the pieces
+transform_component({"name": "Ridge",     # then mutate by name
+                     "move_to": [0, 0, 96]})
+```
+
+`name_prefix` and `name_pattern` are mutually exclusive. Pass `parent_id` to scope the search into a nested group. Bounds matching is intersection (not strict containment), since "what's near X?" is the more common need.
 
 #### Addressing entities: by ID or by name
 
