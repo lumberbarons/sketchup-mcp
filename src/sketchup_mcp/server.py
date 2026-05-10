@@ -44,52 +44,6 @@ class SketchupClient:
             logger.warning(f"SketchUp not reachable at {self.host}:{self.port}: {e}")
             return False
 
-    def receive_full_response(self, sock, buffer_size=8192):
-        """Receive the complete response, potentially in multiple chunks"""
-        chunks = []
-        sock.settimeout(15.0)
-        
-        try:
-            while True:
-                try:
-                    chunk = sock.recv(buffer_size)
-                    if not chunk:
-                        if not chunks:
-                            raise Exception("Connection closed before receiving any data")
-                        break
-                    
-                    chunks.append(chunk)
-                    
-                    try:
-                        data = b''.join(chunks)
-                        json.loads(data.decode('utf-8'))
-                        logger.debug(f"Received complete response ({len(data)} bytes)")
-                        return data
-                    except json.JSONDecodeError:
-                        continue
-                except socket.timeout:
-                    logger.warning("Socket timeout during chunked receive")
-                    break
-                except (ConnectionError, BrokenPipeError, ConnectionResetError) as e:
-                    logger.error(f"Socket connection error during receive: {str(e)}")
-                    raise
-        except socket.timeout:
-            logger.warning("Socket timeout during chunked receive")
-        except Exception as e:
-            logger.error(f"Error during receive: {str(e)}")
-            raise
-            
-        if chunks:
-            data = b''.join(chunks)
-            logger.debug(f"Returning data after receive completion ({len(data)} bytes)")
-            try:
-                json.loads(data.decode('utf-8'))
-                return data
-            except json.JSONDecodeError:
-                raise Exception("Incomplete JSON response received")
-        else:
-            raise Exception("No data received")
-
     def send_command(self, method: str, params: Dict[str, Any] = None, request_id: Any = None) -> Dict[str, Any]:
         """Send a JSON-RPC request to Sketchup and return the response.
 
@@ -130,9 +84,13 @@ class SketchupClient:
         sock.sendall(request_bytes)
 
     def _read_response(self, sock: socket.socket) -> Any:
-        response_data = self.receive_full_response(sock)
-        logger.debug(f"Received {len(response_data)} bytes of data")
-        response = json.loads(response_data.decode('utf-8'))
+        # Both sides terminate JSON messages with '\n', so one readline = one message.
+        fp = sock.makefile('rb')
+        line = fp.readline()
+        if not line:
+            raise Exception("Connection closed before receiving any data")
+        logger.debug(f"Received response ({len(line)} bytes)")
+        response = json.loads(line.decode('utf-8'))
         logger.debug(f"Response parsed: {response}")
         return response
 
