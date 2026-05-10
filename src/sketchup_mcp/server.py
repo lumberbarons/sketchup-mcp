@@ -91,26 +91,35 @@ class SketchupClient:
             raise Exception("No data received")
 
     def send_command(self, method: str, params: Dict[str, Any] = None, request_id: Any = None) -> Dict[str, Any]:
-        """Send a JSON-RPC request to Sketchup and return the response."""
+        """Send a JSON-RPC request to Sketchup and return the response.
+
+        Retries are limited to connect-time failures so we never replay a
+        request that may have already reached SketchUp. Once the socket is
+        open, send/recv failures bubble up and the call fails.
+        """
         request = {
             "jsonrpc": "2.0",
             "method": method,
             "params": params or {},
             "id": request_id,
         }
-        max_retries = 2
+        with closing(self._connect_with_retries()) as sock:
+            self._send_request(sock, request)
+            response = self._read_response(sock)
+        return self._unwrap_response(response)
+
+    def _connect_with_retries(self, max_retries: int = 2) -> socket.socket:
         last_error: Optional[Exception] = None
         for attempt in range(max_retries + 1):
             try:
-                with closing(self._open_socket()) as sock:
-                    self._send_request(sock, request)
-                    response = self._read_response(sock)
-                return self._unwrap_response(response)
-            except (socket.timeout, ConnectionError, BrokenPipeError, ConnectionResetError) as e:
+                return self._open_socket()
+            except OSError as e:
                 last_error = e
-                logger.warning(f"Connection error (attempt {attempt+1}/{max_retries+1}): {e}")
-        logger.error("Max retries reached, giving up")
-        raise Exception(f"Connection to Sketchup lost after {max_retries+1} attempts: {last_error}")
+                logger.warning(f"Connect failed (attempt {attempt+1}/{max_retries+1}): {e}")
+        raise ConnectionError(
+            f"Could not connect to SketchUp at {self.host}:{self.port} "
+            f"after {max_retries+1} attempts: {last_error}"
+        )
 
     def _send_request(self, sock: socket.socket, request: Dict[str, Any]) -> None:
         request_bytes = json.dumps(request).encode('utf-8') + b'\n'
