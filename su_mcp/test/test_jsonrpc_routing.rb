@@ -92,7 +92,7 @@ class TestJsonrpcRouting < Minitest::Test
 
   def test_legacy_command_format_is_converted_to_tools_call
     server = SpyServer.new
-    server.send(:handle_jsonrpc_request,
+    response = server.send(:handle_jsonrpc_request,
       "command"    => "create_component",
       "parameters" => { "type" => "cube" },
       "jsonrpc"    => "2.0",
@@ -104,6 +104,10 @@ class TestJsonrpcRouting < Minitest::Test
     assert_equal "create_component",  converted["params"]["name"]
     assert_equal({ "type" => "cube" }, converted["params"]["arguments"])
     assert_equal 42, converted["id"]
+
+    # Production must return handle_tool_call's response, not nil; otherwise
+    # real clients receive a broken response even though the spy was called.
+    assert_equal({ jsonrpc: "2.0", result: { success: true }, id: 42 }, response)
   end
 
   def test_legacy_command_with_no_parameters_passes_nil_arguments
@@ -145,9 +149,10 @@ class TestJsonrpcRouting < Minitest::Test
       "params"  => { "name" => "get_selection", "arguments" => {} },
       "id"      => 99,
     }
-    server.send(:handle_jsonrpc_request, request)
+    response = server.send(:handle_jsonrpc_request, request)
 
     assert_equal 1, server.tool_calls.length
     assert_same request, server.tool_calls.first
+    assert_equal({ jsonrpc: "2.0", result: { success: true }, id: 99 }, response)
   end
 end
