@@ -51,15 +51,28 @@ class TestCalculatePositionOnFace < Minitest::Test
     assert_equal [8, 14, 0], position(:bottom)
   end
 
-  # With zero offsets the in-face position should land on the face center
-  # (minus half-width / half-height), confirming the offset arithmetic
-  # actually depends on the offset args rather than being constant.
-  def test_zero_offsets_centers_on_face
-    result = @server.send(
-      :calculate_position_on_face,
-      :east, @bounds, @width, @height, @depth, 0, 0, 0
-    )
-    assert_equal [10, 10 - @width / 2, 15 - @height / 2], result
+  # With zero offsets each in-face coordinate equals
+  # `bounds.center - dim/2` on the two non-anchored axes; the anchored
+  # axis equals max or min on that axis. Covering all six directions
+  # ensures dropping a `- width/2` or `- height/2` term in any branch
+  # of main.rb's case statement breaks at least one assertion.
+  def test_zero_offsets_centers_on_face_for_all_directions
+    expected = {
+      east:   [10, 10 - @width / 2, 15 - @height / 2],
+      west:   [0,  10 - @width / 2, 15 - @height / 2],
+      north:  [5  - @width / 2, 20, 15 - @height / 2],
+      south:  [5  - @width / 2, 0,  15 - @height / 2],
+      top:    [5  - @width / 2, 10 - @height / 2, 30],
+      bottom: [5  - @width / 2, 10 - @height / 2, 0],
+    }
+
+    expected.each do |direction, expected_position|
+      result = @server.send(
+        :calculate_position_on_face,
+        direction, @bounds, @width, @height, @depth, 0, 0, 0
+      )
+      assert_equal expected_position, result, "zero-offset position for #{direction.inspect}"
+    end
   end
 
   def test_unknown_direction_raises_argument_error
