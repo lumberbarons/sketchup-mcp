@@ -1,4 +1,4 @@
-.PHONY: help test lint format install rbz
+.PHONY: help test test-ruby lint format install rbz
 .DEFAULT_GOAL := help
 
 help:  ## Show this help message
@@ -9,6 +9,10 @@ install:  ## Sync dependencies (test + lint extras)
 
 test:  ## Run the pytest suite
 	uv run pytest
+
+test-ruby:  ## Run the Ruby minitest suite (no SketchUp required)
+	@find su_mcp/test -name 'test_*.rb' ! -name 'test_helper.rb' -print0 \
+		| xargs -0 -n1 ruby -Isu_mcp/test
 
 lint:  ## Check style (ruff check + ruff format --check)
 	uv run ruff check .

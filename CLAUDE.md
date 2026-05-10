@@ -11,6 +11,7 @@ extension (`su_mcp`) that runs inside SketchUp itself.
 | `src/sketchup_mcp/` | Python MCP server. Defines tools (`@mcp.tool()`) and the `SketchupClient` that talks to the Ruby side over TCP. | Adding or changing an MCP tool, debugging client/server framing, changing connection behavior. |
 | `su_mcp/` | SketchUp Ruby extension. `su_mcp.rb` is the loader; `su_mcp/main.rb` is the in-process TCP server and tool dispatcher. | Adding or changing the SketchUp-side handler for an MCP tool, debugging Ruby errors, modifying joinery code. |
 | `tests/` | Pytest suite for the Python server. `test_sketchup_client.py` covers the TCP client; `test_server_tools.py` covers tool wiring. | Adding tests for new tools, reproducing client/server bugs without SketchUp running. |
+| `su_mcp/test/` | Minitest suite for pure-logic helpers in the Ruby extension. `test_helper.rb` stubs the SketchUp environment so `main.rb` loads without it. | Adding tests for new pure helpers (no `Sketchup.`/`Geom.`/`UI.` calls). Use `make test-ruby`. |
 | `examples/` | Ruby snippets bundled in `.py` wrappers, demonstrating what to send through `eval_ruby`. | Looking for reusable Ruby code to pass through `eval_ruby`, or writing a new demo. |
 | `scripts/build_rbz.sh` | Build script that zips `su_mcp/` into `su_mcp_v<version>.rbz` for Extension Manager. Also runnable via `make rbz`. | Cutting a new extension build. |
 | `pyproject.toml` | Python package metadata, dependencies, ruff config. Version lives here and in `server.py:__version__`. | Bumping the Python package version, adding a dependency. |
@@ -21,6 +22,7 @@ extension (`su_mcp`) that runs inside SketchUp itself.
 ```bash
 make install      # uv sync with test + lint extras
 make test         # pytest
+make test-ruby    # Ruby minitest (no SketchUp required)
 make lint         # ruff check + ruff format --check
 make format       # ruff check --fix + ruff format
 make rbz          # build the SketchUp .rbz (runs scripts/build_rbz.sh)
@@ -37,6 +39,11 @@ uvx sketchup-mcp  # run the MCP server (expects extension on localhost:9876)
   the socket after each request, so reusing a socket will hang.
 - `eval_ruby` runs arbitrary Ruby with full SketchUp API + filesystem
   access. Treat it as a trusted-client-only feature.
+- The Ruby minitest suite (`make test-ruby`) only covers helpers that don't
+  touch the SketchUp API. To add a test, write the helper so it takes plain
+  data (numbers, hashes, points) — not `Sketchup::Group` / `Geom::Point3d` —
+  and add a file under `su_mcp/test/test_<helper>.rb` using the `FakePoint`,
+  `FakeBounds`, `FakeVector`, and `TestServer` fixtures from `test_helper.rb`.
 
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
