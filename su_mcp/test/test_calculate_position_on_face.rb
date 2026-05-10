@@ -57,4 +57,9 @@ class TestCalculatePositionOnFace < Minitest::Test
     )
     assert_equal [10, 10 - @width / 2, 15 - @height / 2], result
   end
+
+  def test_unknown_direction_raises_argument_error
+    error = assert_raises(ArgumentError) { position(:nowhere) }
+    assert_match(/face_direction/, error.message)
+  end
 end

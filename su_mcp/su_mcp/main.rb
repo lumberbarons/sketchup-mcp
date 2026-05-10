@@ -1507,6 +1507,8 @@ module SU_MCP
           bounds.center.y - height/2 + offset_y,
           bounds.min.z
         ]
+      else
+        raise ArgumentError, "Unknown face_direction: #{face_direction.inspect}"
       end
     end
     
