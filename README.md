@@ -20,6 +20,15 @@ The system consists of two main components:
 1. **Sketchup Extension**: A Sketchup extension that creates a TCP server within Sketchup to receive and execute commands
 2. **MCP Server (`sketchup_mcp/server.py`)**: A Python server that implements the Model Context Protocol and connects to the Sketchup extension
 
+## Requirements
+
+- SketchUp 2021 or newer (the extension uses `UI.start_timer` and
+  modern Ruby APIs available in 2021+)
+- Python 3.10 or newer
+- macOS or Windows — both are supported. The install hints below show
+  Homebrew commands; on Windows use the equivalent step linked in
+  each tool's docs.
+
 ## Installation
 
 ### Python Packaging
