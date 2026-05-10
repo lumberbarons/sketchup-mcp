@@ -4,7 +4,7 @@ import json
 import asyncio
 import logging
 from dataclasses import dataclass
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from typing import AsyncIterator, Dict, Any, List, Optional
 
 # Configure logging
@@ -92,91 +92,48 @@ class SketchupClient:
 
     def send_command(self, method: str, params: Dict[str, Any] = None, request_id: Any = None) -> Dict[str, Any]:
         """Send a JSON-RPC request to Sketchup and return the response."""
-        if method == "tools/call" and params and "name" in params and "arguments" in params:
-            request = {
-                "jsonrpc": "2.0",
-                "method": method,
-                "params": params,
-                "id": request_id
-            }
-        else:
-            # This is a direct command - convert to JSON-RPC
-            command_name = method
-            command_params = params or {}
-            logger.info(f"Converting direct command '{command_name}' to JSON-RPC format")
-            request = {
-                "jsonrpc": "2.0",
-                "method": "tools/call",
-                "params": {
-                    "name": command_name,
-                    "arguments": command_params
-                },
-                "id": request_id
-            }
-
+        request = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params or {},
+            "id": request_id,
+        }
         max_retries = 2
-        retry_count = 0
-        sock: Optional[socket.socket] = None
-        try:
-            while retry_count <= max_retries:
-                try:
-                    if sock is None:
-                        sock = self._open_socket()
+        last_error: Optional[Exception] = None
+        for attempt in range(max_retries + 1):
+            try:
+                with closing(self._open_socket()) as sock:
+                    self._send_request(sock, request)
+                    response = self._read_response(sock)
+                return self._unwrap_response(response)
+            except (socket.timeout, ConnectionError, BrokenPipeError, ConnectionResetError) as e:
+                last_error = e
+                logger.warning(f"Connection error (attempt {attempt+1}/{max_retries+1}): {e}")
+        logger.error("Max retries reached, giving up")
+        raise Exception(f"Connection to Sketchup lost after {max_retries+1} attempts: {last_error}")
 
-                    request_bytes = json.dumps(request).encode('utf-8') + b'\n'
-                    tool_name = request.get("params", {}).get("name", request.get("method"))
-                    logger.info(f"calling tool {tool_name} ({len(request_bytes)} bytes)")
-                    logger.debug(f"Sending JSON-RPC request: {request}")
-                    logger.debug(f"Raw bytes being sent: {request_bytes}")
+    def _send_request(self, sock: socket.socket, request: Dict[str, Any]) -> None:
+        request_bytes = json.dumps(request).encode('utf-8') + b'\n'
+        tool_name = request.get("params", {}).get("name", request.get("method"))
+        logger.info(f"calling tool {tool_name} ({len(request_bytes)} bytes)")
+        logger.debug(f"Sending JSON-RPC request: {request}")
+        logger.debug(f"Raw bytes being sent: {request_bytes}")
+        sock.sendall(request_bytes)
 
-                    sock.sendall(request_bytes)
-                    logger.debug("Request sent, waiting for response...")
+    def _read_response(self, sock: socket.socket) -> Any:
+        response_data = self.receive_full_response(sock)
+        logger.debug(f"Received {len(response_data)} bytes of data")
+        response = json.loads(response_data.decode('utf-8'))
+        logger.debug(f"Response parsed: {response}")
+        return response
 
-                    response_data = self.receive_full_response(sock)
-                    logger.debug(f"Received {len(response_data)} bytes of data")
-
-                    response = json.loads(response_data.decode('utf-8'))
-                    logger.debug(f"Response parsed: {response}")
-
-                    if not isinstance(response, dict):
-                        return response
-
-                    if "error" in response:
-                        logger.error(f"Sketchup error: {response['error']}")
-                        raise Exception(response["error"].get("message", "Unknown error from Sketchup"))
-
-                    return response.get("result", {})
-
-                except (socket.timeout, ConnectionError, BrokenPipeError, ConnectionResetError) as e:
-                    logger.warning(f"Connection error (attempt {retry_count+1}/{max_retries+1}): {str(e)}")
-                    retry_count += 1
-
-                    if sock is not None:
-                        try:
-                            sock.close()
-                        except Exception:
-                            pass
-                        sock = None
-
-                    if retry_count > max_retries:
-                        logger.error("Max retries reached, giving up")
-                        raise Exception(f"Connection to Sketchup lost after {max_retries+1} attempts: {str(e)}")
-
-                except json.JSONDecodeError as e:
-                    logger.error(f"Invalid JSON response from Sketchup: {str(e)}")
-                    if 'response_data' in locals() and response_data:
-                        logger.error(f"Raw response (first 200 bytes): {response_data[:200]}")
-                    raise Exception(f"Invalid response from Sketchup: {str(e)}")
-
-                except Exception as e:
-                    logger.error(f"Error communicating with Sketchup: {str(e)}")
-                    raise Exception(f"Communication error with Sketchup: {str(e)}")
-        finally:
-            if sock is not None:
-                try:
-                    sock.close()
-                except Exception:
-                    pass
+    def _unwrap_response(self, response: Any) -> Any:
+        if not isinstance(response, dict):
+            return response
+        if "error" in response:
+            logger.error(f"Sketchup error: {response['error']}")
+            raise Exception(response["error"].get("message", "Unknown error from Sketchup"))
+        return response.get("result", {})
 
 # Module-level client. Stateless — every send_command opens its own socket.
 _sketchup_client: Optional["SketchupClient"] = None
