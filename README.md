@@ -96,6 +96,7 @@ Once connected, Claude can interact with Sketchup using the following capabiliti
 #### Tools
 
 * `create_component` - Create a new component with specified type, position, and dimensions
+* `create_extrusion` - Create a Group by extruding a 2D profile along x, y, or z (sloped tops, parallelogram rafters, fascia boards, etc.)
 * `delete_component` - Remove a component from the scene by entity ID or top-level group name
 * `transform_component` - Move, rotate, or scale a component, addressed by entity ID or top-level group name
 * `find_groups` - Query the model for groups by name prefix, regex, bounds intersection, or parent
@@ -106,6 +107,39 @@ Once connected, Claude can interact with Sketchup using the following capabiliti
 * `create_dovetail` - Create a dovetail joint between two components
 * `create_finger_joint` - Create a finger (box) joint between two components
 * `eval_ruby` - Execute arbitrary Ruby code in SketchUp for advanced operations
+
+#### Extruded profiles
+
+`create_extrusion` covers the most common shape in framing work — a 2D profile pushed along an axis — without dropping into `eval_ruby`. The 2D vertices are interpreted in the plane perpendicular to `extrude_axis`, and the face is auto-flipped so vertex winding doesn't matter.
+
+Before — about 20 lines of `eval_ruby` for one sloped rafter:
+
+```ruby
+g = Sketchup.active_model.active_entities.add_group
+g.name = "Rafter W 5"
+face = g.entities.add_face(
+  Geom::Point3d.new(-12, 15.25, 89.625),
+  Geom::Point3d.new(59.25, 15.25, 125.25),
+  Geom::Point3d.new(59.25, 15.25, 131.399),
+  Geom::Point3d.new(-12, 15.25, 95.774)
+)
+face.reverse! if face.normal.y < 0
+face.pushpull(1.5)
+```
+
+After — one call:
+
+```text
+create_extrusion({
+  "name": "Rafter W 5",
+  "profile": [[-12, 89.625], [59.25, 125.25], [59.25, 131.399], [-12, 95.774]],
+  "extrude_axis": "y",
+  "extrude_from": 15.25,
+  "extrude_to": 16.75
+})
+```
+
+`extrude_to` may be less than `extrude_from` (e.g. building a sloped stud top-down). An optional `material` argument applies a color or named material in the same call.
 
 #### Discovering existing geometry
 

@@ -92,6 +92,7 @@ async def test_every_tool_is_registered(fake: FakeSketchupClient) -> None:
     names = {t.name for t in listed.tools}
     assert names == {
         "create_component",
+        "create_extrusion",
         "delete_component",
         "transform_component",
         "find_groups",
@@ -520,3 +521,135 @@ async def test_find_groups_omits_unset_filters(fake: FakeSketchupClient) -> None
     assert fake.last_arguments == {"limit": 200, "include_components": False}
     for key in ("name_prefix", "name_pattern", "in_bounds", "parent_id"):
         assert key not in fake.last_arguments, f"unset {key} must be omitted"
+
+
+# ---------------------------------------------------------------------------
+# create_extrusion — non-axis-aligned profiles on each axis, reverse-direction
+# extrusion, and the material round-trip. Geometry construction itself lives
+# in Ruby (see su_mcp/test/test_extrusion_helpers.rb); these cases pin the
+# wire shape and confirm that each axis option survives the round trip.
+# ---------------------------------------------------------------------------
+
+
+# Parallelogram side profile of a sloped 2x6 rafter — taken verbatim from
+# the create_extrusion bead's worked example. Vertices are intentionally not
+# axis-aligned (sloped top and bottom edges) so a future refactor that
+# accidentally axis-snaps the profile would break the assertion.
+_RAFTER_PROFILE = [
+    [-12, 89.625],
+    [59.25, 125.25],
+    [59.25, 131.399],
+    [-12, 95.774],
+]
+
+
+async def test_create_extrusion_y_axis_rafter(fake: FakeSketchupClient) -> None:
+    """The canonical use case from the bead: parallelogram profile extruded
+    1.5" along y to make a single rafter."""
+    async with make_session() as session:
+        await session.call_tool(
+            "create_extrusion",
+            {
+                "name": "Rafter W 5",
+                "profile": _RAFTER_PROFILE,
+                "extrude_axis": "y",
+                "extrude_from": 15.25,
+                "extrude_to": 16.75,
+            },
+        )
+    assert fake.last_tool_name == "create_extrusion"
+    assert fake.last_arguments == {
+        "name": "Rafter W 5",
+        "profile": _RAFTER_PROFILE,
+        "extrude_axis": "y",
+        "extrude_from": 15.25,
+        "extrude_to": 16.75,
+    }
+    assert "material" not in fake.last_arguments
+
+
+async def test_create_extrusion_x_axis(fake: FakeSketchupClient) -> None:
+    async with make_session() as session:
+        await session.call_tool(
+            "create_extrusion",
+            {
+                "name": "Header A",
+                "profile": _RAFTER_PROFILE,
+                "extrude_axis": "x",
+                "extrude_from": 0.0,
+                "extrude_to": 3.5,
+            },
+        )
+    assert fake.last_arguments["extrude_axis"] == "x"
+    assert fake.last_arguments["profile"] == _RAFTER_PROFILE
+
+
+async def test_create_extrusion_z_axis(fake: FakeSketchupClient) -> None:
+    async with make_session() as session:
+        await session.call_tool(
+            "create_extrusion",
+            {
+                "name": "Post 1",
+                "profile": _RAFTER_PROFILE,
+                "extrude_axis": "z",
+                "extrude_from": 0.0,
+                "extrude_to": 96.0,
+            },
+        )
+    assert fake.last_arguments["extrude_axis"] == "z"
+
+
+async def test_create_extrusion_reverse_direction(
+    fake: FakeSketchupClient,
+) -> None:
+    """`extrude_to < extrude_from` must round-trip unchanged — Ruby's
+    extrude_direction helper handles the sign. If we sorted these in Python
+    we'd break the "face faces the right way" contract."""
+    async with make_session() as session:
+        await session.call_tool(
+            "create_extrusion",
+            {
+                "name": "Sloped Stud",
+                "profile": _RAFTER_PROFILE,
+                "extrude_axis": "z",
+                "extrude_from": 96.0,
+                "extrude_to": 0.0,
+            },
+        )
+    assert fake.last_arguments["extrude_from"] == 96.0
+    assert fake.last_arguments["extrude_to"] == 0.0
+
+
+async def test_create_extrusion_forwards_material(
+    fake: FakeSketchupClient,
+) -> None:
+    async with make_session() as session:
+        await session.call_tool(
+            "create_extrusion",
+            {
+                "name": "Fascia",
+                "profile": [[0, 0], [1, 0], [1, 1], [0, 1]],
+                "extrude_axis": "y",
+                "extrude_from": 0,
+                "extrude_to": 100,
+                "material": "#8B4513",
+            },
+        )
+    assert fake.last_arguments["material"] == "#8B4513"
+
+
+async def test_create_extrusion_omits_unset_material(
+    fake: FakeSketchupClient,
+) -> None:
+    async with make_session() as session:
+        await session.call_tool(
+            "create_extrusion",
+            {
+                "name": "Fascia",
+                "profile": [[0, 0], [1, 0], [1, 1], [0, 1]],
+                "extrude_axis": "y",
+                "extrude_from": 0,
+                "extrude_to": 100,
+            },
+        )
+    assert "material" not in fake.last_arguments

@@ -220,6 +220,8 @@ module SU_MCP
         result = case tool_name
         when "create_component"
           create_component(args)
+        when "create_extrusion"
+          create_extrusion(args)
         when "delete_component"
           delete_component(args)
         when "transform_component"
@@ -504,6 +506,83 @@ module SU_MCP
       else
         raise "Unknown component type: #{params["type"]}"
       end
+    end
+
+    def create_extrusion(params)
+      log "create_extrusion params: #{params.inspect}"
+
+      name = params["name"].to_s
+      profile = params["profile"]
+      axis = params["extrude_axis"].to_s
+      from = params["extrude_from"]
+      to = params["extrude_to"]
+
+      raise "'name' is required" if name.empty?
+      unless profile.is_a?(Array) && profile.length >= 3
+        raise "'profile' must be an array of at least 3 [a, b] vertices"
+      end
+      unless %w[x y z].include?(axis)
+        raise "'extrude_axis' must be one of 'x', 'y', 'z' (got #{params["extrude_axis"].inspect})"
+      end
+      unless from.is_a?(Numeric) && to.is_a?(Numeric)
+        raise "'extrude_from' and 'extrude_to' must be numbers"
+      end
+      raise "'extrude_from' and 'extrude_to' must differ" if from == to
+
+      point_tuples = build_profile_points(profile, axis, from.to_f)
+      points = point_tuples.map { |x, y, z| Geom::Point3d.new(x, y, z) }
+      dx, dy, dz = extrude_direction(axis, from.to_f, to.to_f)
+      desired = Geom::Vector3d.new(dx, dy, dz)
+
+      model = Sketchup.active_model
+      group = model.active_entities.add_group
+      group.name = name
+
+      face = group.entities.add_face(points)
+      # Generalization of the cube-branch face.reverse! guard: pushpull
+      # extrudes along the face's *front* normal, so flip the face when its
+      # normal disagrees with the direction the caller asked for. This is
+      # what makes vertex-winding irrelevant from the caller's point of view.
+      face.reverse! if face.normal.dot(desired) < 0
+      face.pushpull((to - from).abs)
+
+      apply_material(group, params["material"]) if params["material"]
+
+      bounds_result(group)
+    end
+
+    # Pure: map a 2D profile + fixed-axis coordinate into [x, y, z] tuples.
+    # The axis names the *extrude* direction, so the profile lives in the
+    # plane perpendicular to it.
+    def build_profile_points(profile, axis, fixed)
+      fixed = fixed.to_f
+      profile.map do |pair|
+        a = pair[0].to_f
+        b = pair[1].to_f
+        case axis.to_s
+        when "x" then [fixed, a, b]
+        when "y" then [a, fixed, b]
+        when "z" then [a, b, fixed]
+        end
+      end
+    end
+
+    # Pure: unit vector along `axis` pointing from `from` toward `to`. Used
+    # to decide whether to flip the face so pushpull extrudes the right way.
+    def extrude_direction(axis, from, to)
+      sign = (to - from) > 0 ? 1.0 : -1.0
+      case axis.to_s
+      when "x" then [sign, 0.0, 0.0]
+      when "y" then [0.0, sign, 0.0]
+      when "z" then [0.0, 0.0, sign]
+      end
+    end
+
+    # Reuse the existing set_material path so name/hex resolution and color
+    # defaults stay in one place. set_material accepts the same `id` format
+    # the dispatcher already strips.
+    def apply_material(group, material_name)
+      set_material({ "id" => group.entityID, "material" => material_name })
     end
 
     # Resolve an entity from `params` by either `id` (entity ID) or `name`

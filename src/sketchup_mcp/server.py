@@ -244,6 +244,50 @@ def transform_component(
 
 
 @mcp.tool()
+def create_extrusion(
+    ctx: Context,
+    name: str,
+    profile: list[list[float]],
+    extrude_axis: str,
+    extrude_from: float,
+    extrude_to: float,
+    material: str | None = None,
+) -> str:
+    """Create a Group from a 2D profile extruded along the given axis.
+
+    The 2D profile is interpreted in the plane perpendicular to `extrude_axis`:
+
+    - `"x"`: each `[a, b]` is `[y, z]`; face sits at `x=extrude_from`.
+    - `"y"`: each `[a, b]` is `[x, z]`; face sits at `y=extrude_from`.
+    - `"z"`: each `[a, b]` is `[x, y]`; face sits at `z=extrude_from`.
+
+    Vertex winding (CW vs CCW) doesn't matter — face direction is chosen
+    from the requested extrude direction, not from the right-hand rule.
+    `extrude_to` may be less than `extrude_from`; sign drives direction.
+    The polygon is closed automatically (don't repeat the first vertex).
+
+    name: name assigned to the resulting Group.
+    profile: ordered 2D vertices, length >= 3.
+    extrude_axis: "x", "y", or "z".
+    extrude_from: coordinate of the profile face on the extrusion axis.
+    extrude_to: coordinate where the extrusion ends.
+    material: optional name or "#RRGGBB" hex applied to the resulting group.
+
+    Returns `{id, bounds: {min, max}, success}` — same shape as create_component.
+    """
+    arguments: dict[str, Any] = {
+        "name": name,
+        "profile": profile,
+        "extrude_axis": extrude_axis,
+        "extrude_from": extrude_from,
+        "extrude_to": extrude_to,
+    }
+    if material is not None:
+        arguments["material"] = material
+    return _call_sketchup(ctx, "create_extrusion", arguments)
+
+
+@mcp.tool()
 def find_groups(
     ctx: Context,
     name_prefix: str | None = None,
