@@ -96,8 +96,8 @@ Once connected, Claude can interact with Sketchup using the following capabiliti
 #### Tools
 
 * `create_component` - Create a new component with specified type, position, and dimensions
-* `delete_component` - Remove a component from the scene by ID
-* `transform_component` - Move, rotate, or scale a component
+* `delete_component` - Remove a component from the scene by entity ID or top-level group name
+* `transform_component` - Move, rotate, or scale a component, addressed by entity ID or top-level group name
 * `get_selection` - Get information about currently selected components
 * `set_material` - Apply a material or color to a component
 * `export_scene` - Export the current scene (default format: `skp`)
@@ -105,6 +105,13 @@ Once connected, Claude can interact with Sketchup using the following capabiliti
 * `create_dovetail` - Create a dovetail joint between two components
 * `create_finger_joint` - Create a finger (box) joint between two components
 * `eval_ruby` - Execute arbitrary Ruby code in SketchUp for advanced operations
+
+#### Addressing entities: by ID or by name
+
+`delete_component` and `transform_component` accept exactly one of:
+
+* `id` — the integer entity ID returned by `create_*` calls. Cheapest and unambiguous; use it inside tight loops where the ID is fresh.
+* `name` — exact match against a top-level Group's name (e.g. `"Ridge"`, `"Rafter W 5"`). Prefer this for human-driven edits where IDs are easy to lose track of. Lookup errors clearly if zero or multiple groups share the name — there is no silent first-match.
 
 ### Example Commands
 

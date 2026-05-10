@@ -231,6 +231,52 @@ async def test_transform_component_forwards_move_to_alone(
 
 
 # ---------------------------------------------------------------------------
+# Name-based addressing — `name` is forwarded in place of `id` for
+# delete_component and transform_component. The actual resolution (and the
+# both/neither/not-found/ambiguous error paths) lives on the Ruby side and
+# is exercised by su_mcp/test/test_resolve_entity.rb. Here we just verify
+# the wire-level forwarding so a future rename in the Python tool can't
+# silently drop the parameter.
+# ---------------------------------------------------------------------------
+
+
+async def test_delete_component_forwards_name(fake: FakeSketchupClient) -> None:
+    async with make_session() as session:
+        await session.call_tool("delete_component", {"name": "Rafter W 5"})
+    assert fake.last_tool_name == "delete_component"
+    assert fake.last_arguments == {"name": "Rafter W 5"}
+    assert "id" not in fake.last_arguments
+
+
+async def test_transform_component_forwards_name(fake: FakeSketchupClient) -> None:
+    async with make_session() as session:
+        await session.call_tool("transform_component", {"name": "Ridge", "move_to": [0, 0, 5]})
+    assert fake.last_tool_name == "transform_component"
+    assert fake.last_arguments == {"name": "Ridge", "move_to": [0, 0, 5]}
+    assert "id" not in fake.last_arguments
+
+
+async def test_delete_component_forwards_neither_when_omitted(
+    fake: FakeSketchupClient,
+) -> None:
+    """When neither id nor name is given, both are omitted from the forwarded
+    payload; the Ruby side raises the both/neither validation error."""
+    async with make_session() as session:
+        await session.call_tool("delete_component", {})
+    assert fake.last_arguments == {}
+
+
+async def test_transform_component_forwards_both_when_both_given(
+    fake: FakeSketchupClient,
+) -> None:
+    """Python doesn't validate exclusivity — both are forwarded so the Ruby
+    side's resolve_entity is the single source of truth for the error."""
+    async with make_session() as session:
+        await session.call_tool("transform_component", {"id": "5", "name": "Ridge"})
+    assert fake.last_arguments == {"id": "5", "name": "Ridge"}
+
+
+# ---------------------------------------------------------------------------
 # Argument-name parity for every tool — catches typos in keys forwarded to
 # the Ruby side, which would otherwise fail silently as missing-arg errors
 # at runtime against a live SketchUp.

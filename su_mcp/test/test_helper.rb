@@ -15,6 +15,14 @@ unless defined?(Sketchup)
   end
 end
 
+# Bare base class so resolve_entity's `grep(Sketchup::Group)` works against
+# fakes — Array#grep matches with `===`, which on a class is `is_a?`.
+unless defined?(Sketchup::Group)
+  module Sketchup
+    class Group; end
+  end
+end
+
 unless defined?(UI)
   module UI
     def self.start_timer(*); end

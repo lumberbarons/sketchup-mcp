@@ -190,21 +190,35 @@ def create_component(
 
 
 @mcp.tool()
-def delete_component(ctx: Context, id: str) -> str:
-    """Delete a component by ID"""
-    return _call_sketchup(ctx, "delete_component", {"id": id})
+def delete_component(ctx: Context, id: str | None = None, name: str | None = None) -> str:
+    """Delete a component by entity ID or top-level group name.
+
+    Provide exactly one of `id` (entity ID, as returned by create_*) or
+    `name` (exact match against a top-level Group's name). Name lookup
+    errors if zero or multiple groups match.
+    """
+    arguments: dict[str, Any] = {}
+    if id is not None:
+        arguments["id"] = id
+    if name is not None:
+        arguments["name"] = name
+    return _call_sketchup(ctx, "delete_component", arguments)
 
 
 @mcp.tool()
 def transform_component(
     ctx: Context,
-    id: str,
+    id: str | None = None,
+    name: str | None = None,
     move_to: list[float] | None = None,
     position: list[float] | None = None,
     rotation: list[float] | None = None,
     scale: list[float] | None = None,
 ) -> str:
     """Transform a component's placement.
+
+    Provide exactly one of `id` (entity ID) or `name` (exact match against a
+    top-level Group's name). Name lookup errors if zero or multiple groups match.
 
     move_to: absolute XYZ (inches) — translates the entity so its bounds.min
         lands at the given point. Use this for "place at" operations.
@@ -213,7 +227,11 @@ def transform_component(
     rotation: degrees about the entity's bounds-center, applied X then Y then Z.
     scale: per-axis scale factors about the entity's bounds-center.
     """
-    arguments: dict[str, Any] = {"id": id}
+    arguments: dict[str, Any] = {}
+    if id is not None:
+        arguments["id"] = id
+    if name is not None:
+        arguments["name"] = name
     if move_to is not None:
         arguments["move_to"] = move_to
     if position is not None:

@@ -504,104 +504,112 @@ module SU_MCP
       end
     end
 
-    def delete_component(params)
-      model = Sketchup.active_model
-      
-      # Handle ID format - strip quotes if present
-      id_str = params["id"].to_s.gsub('"', '')
-      log "Looking for entity with ID: #{id_str}"
-      
-      entity = model.find_entity_by_id(id_str.to_i)
-      
-      if entity
-        log "Found entity: #{entity.inspect}"
-        entity.erase!
-        { success: true }
+    # Resolve an entity from `params` by either `id` (entity ID) or `name`
+    # (exact match against a top-level Group's name). Exactly one must be
+    # provided. Name resolution is strict: zero or multiple matches raise.
+    # Shared by delete_component, transform_component, and (later) batch_create.
+    def resolve_entity(params, model = Sketchup.active_model)
+      has_id = params.key?("id") && !params["id"].nil? && params["id"].to_s != ""
+      has_name = params.key?("name") && !params["name"].nil? && params["name"].to_s != ""
+
+      raise "Provide exactly one of 'id' or 'name', not both" if has_id && has_name
+      raise "Provide exactly one of 'id' or 'name'" unless has_id || has_name
+
+      if has_id
+        id_str = params["id"].to_s.gsub('"', '')
+        log "Resolving entity by ID: #{id_str}"
+        entity = model.find_entity_by_id(id_str.to_i)
+        raise "Entity not found: #{id_str}" unless entity
+        entity
       else
-        raise "Entity not found"
+        name = params["name"].to_s
+        log "Resolving entity by name: #{name.inspect}"
+        matches = model.entities.grep(Sketchup::Group).select { |g| g.name == name }
+        raise "No group found with name #{name.inspect}" if matches.empty?
+        if matches.length > 1
+          ids = matches.map(&:entityID)
+          raise "Multiple groups match name #{name.inspect} (IDs: #{ids.inspect})"
+        end
+        matches.first
       end
     end
 
+    def delete_component(params)
+      entity = resolve_entity(params)
+      log "Found entity: #{entity.inspect}"
+      entity.erase!
+      { success: true }
+    end
+
     def transform_component(params)
-      model = Sketchup.active_model
-      
-      # Handle ID format - strip quotes if present
-      id_str = params["id"].to_s.gsub('"', '')
-      log "Looking for entity with ID: #{id_str}"
-      
-      entity = model.find_entity_by_id(id_str.to_i)
-      
-      if entity
-        log "Found entity: #{entity.inspect}"
+      entity = resolve_entity(params)
+      log "Found entity: #{entity.inspect}"
 
-        # `move_to` places the entity so its bounds.min lands at the given XYZ.
-        # This is the obvious "put this here" semantic — distinct from `position`,
-        # which is a relative delta and is preserved for backwards compatibility.
-        if params["move_to"]
-          target = params["move_to"]
-          current_min = entity.bounds.min
-          delta = Geom::Vector3d.new(
-            target[0] - current_min.x,
-            target[1] - current_min.y,
-            target[2] - current_min.z
-          )
-          log "Moving bounds.min from #{[current_min.x.to_f, current_min.y.to_f, current_min.z.to_f].inspect} to #{target.inspect}"
-          entity.transform!(Geom::Transformation.translation(delta))
-        end
-
-        # `position` is a relative translation applied on top of the entity's
-        # current transform. Passing [0,0,0] is a no-op. Use `move_to` for
-        # absolute placement.
-        if params["position"]
-          pos = params["position"]
-          log "Translating by #{pos.inspect} (relative)"
-
-          translation = Geom::Transformation.translation(Geom::Point3d.new(pos[0], pos[1], pos[2]))
-          entity.transform!(translation)
-        end
-        
-        # Handle rotation (in degrees)
-        if params["rotation"]
-          rot = params["rotation"]
-          log "Rotating by #{rot.inspect} degrees"
-          
-          # Convert to radians
-          x_rot = rot[0] * Math::PI / 180
-          y_rot = rot[1] * Math::PI / 180
-          z_rot = rot[2] * Math::PI / 180
-          
-          # Apply rotations
-          if rot[0] != 0
-            rotation = Geom::Transformation.rotation(entity.bounds.center, Geom::Vector3d.new(1, 0, 0), x_rot)
-            entity.transform!(rotation)
-          end
-          
-          if rot[1] != 0
-            rotation = Geom::Transformation.rotation(entity.bounds.center, Geom::Vector3d.new(0, 1, 0), y_rot)
-            entity.transform!(rotation)
-          end
-          
-          if rot[2] != 0
-            rotation = Geom::Transformation.rotation(entity.bounds.center, Geom::Vector3d.new(0, 0, 1), z_rot)
-            entity.transform!(rotation)
-          end
-        end
-        
-        # Handle scale
-        if params["scale"]
-          scale = params["scale"]
-          log "Scaling by #{scale.inspect}"
-          
-          # Create a transformation to scale the entity
-          center = entity.bounds.center
-          scaling = Geom::Transformation.scaling(center, scale[0], scale[1], scale[2])
-          entity.transform!(scaling)
-        end
-
-        bounds_result(entity)
-      else
-        raise "Entity not found"
+      # `move_to` places the entity so its bounds.min lands at the given XYZ.
+      # This is the obvious "put this here" semantic — distinct from `position`,
+      # which is a relative delta and is preserved for backwards compatibility.
+      if params["move_to"]
+        target = params["move_to"]
+        current_min = entity.bounds.min
+        delta = Geom::Vector3d.new(
+          target[0] - current_min.x,
+          target[1] - current_min.y,
+          target[2] - current_min.z
+        )
+        log "Moving bounds.min from #{[current_min.x.to_f, current_min.y.to_f, current_min.z.to_f].inspect} to #{target.inspect}"
+        entity.transform!(Geom::Transformation.translation(delta))
       end
+
+      # `position` is a relative translation applied on top of the entity's
+      # current transform. Passing [0,0,0] is a no-op. Use `move_to` for
+      # absolute placement.
+      if params["position"]
+        pos = params["position"]
+        log "Translating by #{pos.inspect} (relative)"
+
+        translation = Geom::Transformation.translation(Geom::Point3d.new(pos[0], pos[1], pos[2]))
+        entity.transform!(translation)
+      end
+
+      # Handle rotation (in degrees)
+      if params["rotation"]
+        rot = params["rotation"]
+        log "Rotating by #{rot.inspect} degrees"
+
+        # Convert to radians
+        x_rot = rot[0] * Math::PI / 180
+        y_rot = rot[1] * Math::PI / 180
+        z_rot = rot[2] * Math::PI / 180
+
+        # Apply rotations
+        if rot[0] != 0
+          rotation = Geom::Transformation.rotation(entity.bounds.center, Geom::Vector3d.new(1, 0, 0), x_rot)
+          entity.transform!(rotation)
+        end
+
+        if rot[1] != 0
+          rotation = Geom::Transformation.rotation(entity.bounds.center, Geom::Vector3d.new(0, 1, 0), y_rot)
+          entity.transform!(rotation)
+        end
+
+        if rot[2] != 0
+          rotation = Geom::Transformation.rotation(entity.bounds.center, Geom::Vector3d.new(0, 0, 1), z_rot)
+          entity.transform!(rotation)
+        end
+      end
+
+      # Handle scale
+      if params["scale"]
+        scale = params["scale"]
+        log "Scaling by #{scale.inspect}"
+
+        # Create a transformation to scale the entity
+        center = entity.bounds.center
+        scaling = Geom::Transformation.scaling(center, scale[0], scale[1], scale[2])
+        entity.transform!(scaling)
+      end
+
+      bounds_result(entity)
     end
 
     def get_selection
