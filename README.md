@@ -42,9 +42,22 @@ We're using uv so you'll need to ```brew install uv```
 
 ### Starting the Connection
 
-1. In Sketchup, go to Extensions > SketchupMCP > Start Server
-2. The server will start on the default port (9876)
-3. Make sure the MCP server is running in your terminal
+1. In Sketchup, go to Extensions > SketchupMCP > Start Server. The
+   extension listens on `localhost:9876`.
+2. Start the MCP server in a terminal so you can verify the
+   connection before wiring it up to a client:
+   ```bash
+   uvx sketchup-mcp
+   ```
+   On a successful probe you'll see a log line like:
+   ```
+   SketchupMCP Server version 0.1.17 starting up
+   SketchUp reachable at localhost:9876
+   ```
+   If the second line says "SketchUp not reachable", confirm step 1
+   completed and that nothing else is bound to port 9876.
+3. Leave the server running, or stop it with `Ctrl-C` once you're
+   ready to launch it from your MCP client (see below).
 
 ### Using with Claude
 
