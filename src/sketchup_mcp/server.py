@@ -5,7 +5,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Dict, Any, List
+from typing import AsyncIterator, Dict, Any, List, Optional
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -23,18 +23,9 @@ class SketchupConnection:
     sock: socket.socket = None
     
     def connect(self) -> bool:
-        """Connect to the Sketchup extension socket server"""
-        if self.sock:
-            try:
-                # Test if connection is still alive
-                self.sock.settimeout(0.1)
-                self.sock.send(b'')
-                return True
-            except (socket.error, BrokenPipeError, ConnectionResetError):
-                # Connection is dead, close it and reconnect
-                logger.info("Connection test failed, reconnecting...")
-                self.disconnect()
-            
+        """Open a fresh socket. SketchUp closes the client after each request,
+        so we don't try to reuse sockets across calls."""
+        self.disconnect()
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.connect((self.host, self.port))
@@ -200,23 +191,7 @@ def get_sketchup_connection():
     global _sketchup_connection
     
     if _sketchup_connection is not None:
-        try:
-            # Test connection with a ping command
-            ping_request = {
-                "jsonrpc": "2.0",
-                "method": "ping",
-                "params": {},
-                "id": 0
-            }
-            _sketchup_connection.sock.sendall(json.dumps(ping_request).encode('utf-8') + b'\n')
-            return _sketchup_connection
-        except Exception as e:
-            logger.warning(f"Existing connection is no longer valid: {str(e)}")
-            try:
-                _sketchup_connection.disconnect()
-            except:
-                pass
-            _sketchup_connection = None
+        return _sketchup_connection
     
     if _sketchup_connection is None:
         _sketchup_connection = SketchupConnection(host="localhost", port=9876)
@@ -260,8 +235,8 @@ mcp = FastMCP(
 def create_component(
     ctx: Context,
     type: str = "cube",
-    position: List[float] = None,
-    dimensions: List[float] = None
+    position: Optional[List[float]] = None,
+    dimensions: Optional[List[float]] = None
 ) -> str:
     """Create a new component in Sketchup"""
     try:
@@ -316,9 +291,9 @@ def delete_component(
 def transform_component(
     ctx: Context,
     id: str,
-    position: List[float] = None,
-    rotation: List[float] = None,
-    scale: List[float] = None
+    position: Optional[List[float]] = None,
+    rotation: Optional[List[float]] = None,
+    scale: Optional[List[float]] = None
 ) -> str:
     """Transform a component's position, rotation, or scale"""
     try:
