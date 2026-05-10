@@ -50,6 +50,9 @@ class TestJsonrpcRouting < Minitest::Test
     response = server.send(:handle_jsonrpc_request, "method" => "prompts/list", "id" => 1)
 
     assert_equal "2.0", response[:jsonrpc]
+    assert_equal 1,     response[:id]
+    assert_equal [],    response[:result][:prompts]
+    refute response.key?(:error), "tolerated-missing-jsonrpc must complete routing without an error"
   end
 
   def test_resources_list_with_no_active_model_returns_empty_array
