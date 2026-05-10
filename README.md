@@ -28,9 +28,14 @@ We're using uv so you'll need to ```brew install uv```
 
 ### Sketchup Extension
 
-1. Download or build the latest `.rbz` file
+1. Build the `.rbz` from this repo:
+   ```bash
+   ./build_rbz.sh
+   ```
+   This produces `su_mcp_v<version>.rbz` in the repo root (the version
+   comes from `su_mcp/extension.json`).
 2. In Sketchup, go to Window > Extension Manager
-3. Click "Install Extension" and select the downloaded `.rbz` file
+3. Click "Install Extension" and select the `.rbz` file you just built
 4. Restart Sketchup
 
 ## Usage
