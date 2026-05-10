@@ -1,20 +1,23 @@
-from mcp.server.fastmcp import FastMCP, Context
-import socket
 import json
-import asyncio
 import logging
-from dataclasses import dataclass
+import socket
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, closing
-from typing import AsyncIterator, Dict, Any, List, Optional
+from dataclasses import dataclass
+from typing import Any
+
+from mcp.server.fastmcp import Context, FastMCP
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, 
-                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger("SketchupMCPServer")
 
 # Define version directly to avoid pkg_resources dependency
 __version__ = "0.1.17"
 logger.info(f"SketchupMCP Server version {__version__} starting up")
+
 
 @dataclass
 class SketchupClient:
@@ -23,6 +26,7 @@ class SketchupClient:
     SketchUp closes the client socket after each request, so this class
     holds no socket state — every send_command opens a fresh connection.
     """
+
     host: str
     port: int
     timeout: float = 15.0
@@ -44,7 +48,12 @@ class SketchupClient:
             logger.warning(f"SketchUp not reachable at {self.host}:{self.port}: {e}")
             return False
 
-    def send_command(self, method: str, params: Dict[str, Any] = None, request_id: Any = None) -> Dict[str, Any]:
+    def send_command(
+        self,
+        method: str,
+        params: dict[str, Any] = None,
+        request_id: Any = None,
+    ) -> dict[str, Any]:
         """Send a JSON-RPC request to Sketchup and return the response.
 
         Retries are limited to connect-time failures so we never replay a
@@ -63,20 +72,20 @@ class SketchupClient:
         return self._unwrap_response(response)
 
     def _connect_with_retries(self, max_retries: int = 2) -> socket.socket:
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
         for attempt in range(max_retries + 1):
             try:
                 return self._open_socket()
             except OSError as e:
                 last_error = e
-                logger.warning(f"Connect failed (attempt {attempt+1}/{max_retries+1}): {e}")
+                logger.warning(f"Connect failed (attempt {attempt + 1}/{max_retries + 1}): {e}")
         raise ConnectionError(
             f"Could not connect to SketchUp at {self.host}:{self.port} "
-            f"after {max_retries+1} attempts: {last_error}"
+            f"after {max_retries + 1} attempts: {last_error}"
         )
 
-    def _send_request(self, sock: socket.socket, request: Dict[str, Any]) -> None:
-        request_bytes = json.dumps(request).encode('utf-8') + b'\n'
+    def _send_request(self, sock: socket.socket, request: dict[str, Any]) -> None:
+        request_bytes = json.dumps(request).encode("utf-8") + b"\n"
         tool_name = request.get("params", {}).get("name", request.get("method"))
         logger.info(f"calling tool {tool_name} ({len(request_bytes)} bytes)")
         logger.debug(f"Sending JSON-RPC request: {request}")
@@ -85,12 +94,12 @@ class SketchupClient:
 
     def _read_response(self, sock: socket.socket) -> Any:
         # Both sides terminate JSON messages with '\n', so one readline = one message.
-        fp = sock.makefile('rb')
+        fp = sock.makefile("rb")
         line = fp.readline()
         if not line:
             raise Exception("Connection closed before receiving any data")
         logger.debug(f"Received response ({len(line)} bytes)")
-        response = json.loads(line.decode('utf-8'))
+        response = json.loads(line.decode("utf-8"))
         logger.debug(f"Response parsed: {response}")
         return response
 
@@ -102,14 +111,17 @@ class SketchupClient:
             raise Exception(response["error"].get("message", "Unknown error from Sketchup"))
         return response.get("result", {})
 
+
 @asynccontextmanager
-async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
+async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     """Construct the SketchUp client and probe reachability on startup.
     The client is exposed to tools via the lifespan context, not a global."""
     logger.info("SketchupMCP server starting up")
     client = SketchupClient(host="localhost", port=9876)
     if not client.probe():
-        logger.warning("Make sure the SketchUp extension is running and Start Server has been clicked")
+        logger.warning(
+            "Make sure the SketchUp extension is running and Start Server has been clicked"
+        )
     try:
         yield {"sketchup": client}
     finally:
@@ -121,7 +133,7 @@ def _client(ctx: Context) -> SketchupClient:
     return ctx.request_context.lifespan_context["sketchup"]
 
 
-def _call_sketchup(ctx: Context, ruby_tool: str, arguments: Dict[str, Any]) -> str:
+def _call_sketchup(ctx: Context, ruby_tool: str, arguments: dict[str, Any]) -> str:
     """Forward a tool call to the SketchUp Ruby server.
 
     Returns a JSON-encoded envelope with the same shape for every tool:
@@ -140,27 +152,33 @@ def _call_sketchup(ctx: Context, ruby_tool: str, arguments: Dict[str, Any]) -> s
         logger.exception("tool %s failed", ruby_tool)
         return json.dumps({"success": False, "result": None, "error": str(e)})
 
+
 # Create MCP server with lifespan support
 mcp = FastMCP(
     "SketchupMCP",
     instructions="Sketchup integration through the Model Context Protocol",
-    lifespan=server_lifespan
+    lifespan=server_lifespan,
 )
+
 
 # Tool endpoints — each one declares its parameters and forwards to _call_sketchup.
 @mcp.tool()
 def create_component(
     ctx: Context,
     type: str = "cube",
-    position: Optional[List[float]] = None,
-    dimensions: Optional[List[float]] = None,
+    position: list[float] | None = None,
+    dimensions: list[float] | None = None,
 ) -> str:
     """Create a new component in Sketchup"""
-    return _call_sketchup(ctx, "create_component", {
-        "type": type,
-        "position": position if position is not None else [0, 0, 0],
-        "dimensions": dimensions if dimensions is not None else [1, 1, 1],
-    })
+    return _call_sketchup(
+        ctx,
+        "create_component",
+        {
+            "type": type,
+            "position": position if position is not None else [0, 0, 0],
+            "dimensions": dimensions if dimensions is not None else [1, 1, 1],
+        },
+    )
 
 
 @mcp.tool()
@@ -173,12 +191,12 @@ def delete_component(ctx: Context, id: str) -> str:
 def transform_component(
     ctx: Context,
     id: str,
-    position: Optional[List[float]] = None,
-    rotation: Optional[List[float]] = None,
-    scale: Optional[List[float]] = None,
+    position: list[float] | None = None,
+    rotation: list[float] | None = None,
+    scale: list[float] | None = None,
 ) -> str:
     """Transform a component's position, rotation, or scale"""
-    arguments: Dict[str, Any] = {"id": id}
+    arguments: dict[str, Any] = {"id": id}
     if position is not None:
         arguments["position"] = position
     if rotation is not None:
@@ -219,16 +237,20 @@ def create_mortise_tenon(
     offset_z: float = 0.0,
 ) -> str:
     """Create a mortise and tenon joint between two components"""
-    return _call_sketchup(ctx, "create_mortise_tenon", {
-        "mortise_id": mortise_id,
-        "tenon_id": tenon_id,
-        "width": width,
-        "height": height,
-        "depth": depth,
-        "offset_x": offset_x,
-        "offset_y": offset_y,
-        "offset_z": offset_z,
-    })
+    return _call_sketchup(
+        ctx,
+        "create_mortise_tenon",
+        {
+            "mortise_id": mortise_id,
+            "tenon_id": tenon_id,
+            "width": width,
+            "height": height,
+            "depth": depth,
+            "offset_x": offset_x,
+            "offset_y": offset_y,
+            "offset_z": offset_z,
+        },
+    )
 
 
 @mcp.tool()
@@ -246,18 +268,22 @@ def create_dovetail(
     offset_z: float = 0.0,
 ) -> str:
     """Create a dovetail joint between two components"""
-    return _call_sketchup(ctx, "create_dovetail", {
-        "tail_id": tail_id,
-        "pin_id": pin_id,
-        "width": width,
-        "height": height,
-        "depth": depth,
-        "angle": angle,
-        "num_tails": num_tails,
-        "offset_x": offset_x,
-        "offset_y": offset_y,
-        "offset_z": offset_z,
-    })
+    return _call_sketchup(
+        ctx,
+        "create_dovetail",
+        {
+            "tail_id": tail_id,
+            "pin_id": pin_id,
+            "width": width,
+            "height": height,
+            "depth": depth,
+            "angle": angle,
+            "num_tails": num_tails,
+            "offset_x": offset_x,
+            "offset_y": offset_y,
+            "offset_z": offset_z,
+        },
+    )
 
 
 @mcp.tool()
@@ -274,17 +300,21 @@ def create_finger_joint(
     offset_z: float = 0.0,
 ) -> str:
     """Create a finger joint (box joint) between two components"""
-    return _call_sketchup(ctx, "create_finger_joint", {
-        "board1_id": board1_id,
-        "board2_id": board2_id,
-        "width": width,
-        "height": height,
-        "depth": depth,
-        "num_fingers": num_fingers,
-        "offset_x": offset_x,
-        "offset_y": offset_y,
-        "offset_z": offset_z,
-    })
+    return _call_sketchup(
+        ctx,
+        "create_finger_joint",
+        {
+            "board1_id": board1_id,
+            "board2_id": board2_id,
+            "width": width,
+            "height": height,
+            "depth": depth,
+            "num_fingers": num_fingers,
+            "offset_x": offset_x,
+            "offset_y": offset_y,
+            "offset_z": offset_z,
+        },
+    )
 
 
 @mcp.tool()
@@ -292,8 +322,10 @@ def eval_ruby(ctx: Context, code: str) -> str:
     """Evaluate arbitrary Ruby code in Sketchup"""
     return _call_sketchup(ctx, "eval_ruby", {"code": code})
 
+
 def main():
     mcp.run()
+
 
 if __name__ == "__main__":
     main()
