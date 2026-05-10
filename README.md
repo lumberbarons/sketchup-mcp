@@ -66,7 +66,7 @@ For other platforms see the [uv install docs](https://docs.astral.sh/uv/getting-
    ```
    On a successful probe you'll see a log line like:
    ```
-   SketchupMCP Server version 0.1.17 starting up
+   SketchupMCP Server version X.Y.Z starting up
    SketchUp reachable at localhost:9876
    ```
    If the second line says "SketchUp not reachable", confirm step 1

@@ -1,7 +1,5 @@
 """Sketchup integration through Model Context Protocol"""
 
-__version__ = "0.1.17"
-
-from .server import mcp
+from .server import __version__, mcp
 
 __all__ = ["mcp", "__version__"]

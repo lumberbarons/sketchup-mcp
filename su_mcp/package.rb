@@ -1,11 +1,13 @@
 #!/usr/bin/env ruby
 
+require 'json'
 require 'zip'
 require 'fileutils'
 
 # Configuration
 EXTENSION_NAME = 'su_mcp'
-VERSION = '1.6.0'
+# Single-source the version from extension.json so this script can't drift.
+VERSION = JSON.parse(File.read(File.join(__dir__, 'extension.json')))['version']
 OUTPUT_NAME = "#{EXTENSION_NAME}_v#{VERSION}.rbz"
 
 # Create temp directory

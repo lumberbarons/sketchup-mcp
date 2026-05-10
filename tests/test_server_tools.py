@@ -192,6 +192,7 @@ async def test_transform_component_omits_none_arguments(
         await session.call_tool("transform_component", {"id": "abc", "position": [1, 2, 3]})
     args = fake.last_arguments
     assert args == {"id": "abc", "position": [1, 2, 3]}
+    assert "move_to" not in args, "unset move_to must be omitted, not passed as null"
     assert "rotation" not in args, "unset rotation must be omitted, not passed as null"
     assert "scale" not in args, "unset scale must be omitted, not passed as null"
 
@@ -204,6 +205,7 @@ async def test_transform_component_includes_all_provided_arguments(
             "transform_component",
             {
                 "id": "abc",
+                "move_to": [10, 20, 30],
                 "position": [1, 2, 3],
                 "rotation": [0, 90, 0],
                 "scale": [2, 2, 2],
@@ -211,10 +213,21 @@ async def test_transform_component_includes_all_provided_arguments(
         )
     assert fake.last_arguments == {
         "id": "abc",
+        "move_to": [10, 20, 30],
         "position": [1, 2, 3],
         "rotation": [0, 90, 0],
         "scale": [2, 2, 2],
     }
+
+
+async def test_transform_component_forwards_move_to_alone(
+    fake: FakeSketchupClient,
+) -> None:
+    async with make_session() as session:
+        await session.call_tool("transform_component", {"id": "abc", "move_to": [10, 20, 30]})
+    args = fake.last_arguments
+    assert args == {"id": "abc", "move_to": [10, 20, 30]}
+    assert "position" not in args, "unset position must be omitted, not passed as null"
 
 
 # ---------------------------------------------------------------------------

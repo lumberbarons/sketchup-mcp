@@ -29,9 +29,10 @@ uvx sketchup-mcp  # run the MCP server (expects extension on localhost:9876)
 
 ## Gotchas
 
-- The Python and Ruby sides have **independent versions**. `pyproject.toml`
-  / `server.py:__version__` is the MCP server version; `su_mcp/extension.json`
-  is the extension version. Bump each on its own cadence.
+- The Python and Ruby sides share a **single version**. Bump all three
+  together: `pyproject.toml`, `src/sketchup_mcp/server.py:__version__`, and
+  `su_mcp/extension.json`. (`__init__.py` re-exports `__version__` from
+  `server.py`; `su_mcp/package.rb` reads `extension.json`.)
 - `SketchupClient` opens a fresh TCP connection per call — SketchUp closes
   the socket after each request, so reusing a socket will hang.
 - `eval_ruby` runs arbitrary Ruby with full SketchUp API + filesystem

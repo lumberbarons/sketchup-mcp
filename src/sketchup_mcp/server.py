@@ -15,7 +15,7 @@ logging.basicConfig(
 logger = logging.getLogger("SketchupMCPServer")
 
 # Define version directly to avoid pkg_resources dependency
-__version__ = "0.1.17"
+__version__ = "1.7.0"
 logger.info(f"SketchupMCP Server version {__version__} starting up")
 
 
@@ -169,7 +169,15 @@ def create_component(
     position: list[float] | None = None,
     dimensions: list[float] | None = None,
 ) -> str:
-    """Create a new component in Sketchup"""
+    """Create a new component in Sketchup.
+
+    type: one of "cube", "cylinder", "sphere", "cone".
+    position: XYZ (inches) of the bounding-box minimum corner. Z extrusion is
+        always +z, so a cube at position=[0,0,0] dimensions=[w,d,h] occupies
+        z=[0, h] (no whim).
+    dimensions: [width_x, depth_y, height_z] in inches.
+    Returns id and bounds {min, max} so the caller can verify placement.
+    """
     return _call_sketchup(
         ctx,
         "create_component",
@@ -191,12 +199,23 @@ def delete_component(ctx: Context, id: str) -> str:
 def transform_component(
     ctx: Context,
     id: str,
+    move_to: list[float] | None = None,
     position: list[float] | None = None,
     rotation: list[float] | None = None,
     scale: list[float] | None = None,
 ) -> str:
-    """Transform a component's position, rotation, or scale"""
+    """Transform a component's placement.
+
+    move_to: absolute XYZ (inches) — translates the entity so its bounds.min
+        lands at the given point. Use this for "place at" operations.
+    position: relative translation (inches) applied to the existing transform.
+        [0, 0, 0] is a no-op. Use this for "nudge by" operations.
+    rotation: degrees about the entity's bounds-center, applied X then Y then Z.
+    scale: per-axis scale factors about the entity's bounds-center.
+    """
     arguments: dict[str, Any] = {"id": id}
+    if move_to is not None:
+        arguments["move_to"] = move_to
     if position is not None:
         arguments["position"] = position
     if rotation is not None:

@@ -291,6 +291,23 @@ module SU_MCP
       end
     end
 
+    # Build the standard create_* response: id + the world bounds the entity
+    # actually occupies, in inches. Returning bounds saves the agent a follow-up
+    # round trip to verify placement and catches geometry-direction surprises
+    # (pushpull going the wrong way, bird's-mouth offsets, etc.) immediately.
+    def bounds_result(entity)
+      bmin = entity.bounds.min
+      bmax = entity.bounds.max
+      {
+        id: entity.entityID,
+        bounds: {
+          min: [bmin.x.to_f, bmin.y.to_f, bmin.z.to_f],
+          max: [bmax.x.to_f, bmax.y.to_f, bmax.z.to_f]
+        },
+        success: true
+      }
+    end
+
     def create_component(params)
       log "Creating component with params: #{params.inspect}"
       model = Sketchup.active_model
@@ -304,11 +321,11 @@ module SU_MCP
       case params["type"]
       when "cube"
         log "Creating cube at position #{pos.inspect} with dimensions #{dims.inspect}"
-        
+
         begin
           group = entities.add_group
           log "Created group: #{group.inspect}"
-          
+
           face = group.entities.add_face(
             [pos[0], pos[1], pos[2]],
             [pos[0] + dims[0], pos[1], pos[2]],
@@ -316,14 +333,16 @@ module SU_MCP
             [pos[0], pos[1] + dims[1], pos[2]]
           )
           log "Created face: #{face.inspect}"
-          
+
+          # SketchUp's add_face picks a front side heuristically, which means
+          # an isolated horizontal face can end up with its normal pointing -z.
+          # pushpull extrudes along the *front normal*, so without this guard
+          # tall pieces sometimes build below z=pos[2] instead of above.
+          face.reverse! if face.normal.z < 0
           face.pushpull(dims[2])
-          log "Pushed/pulled face by #{dims[2]}"
-          
-          result = { 
-            id: group.entityID,
-            success: true
-          }
+          log "Pushed/pulled face by #{dims[2]} (normal +z)"
+
+          result = bounds_result(group)
           log "Returning result: #{result.inspect}"
           result
         rescue StandardError => e
@@ -359,14 +378,12 @@ module SU_MCP
           
           # Create the circular face
           face = group.entities.add_face(circle_points)
-          
-          # Extrude the face to create the cylinder
+
+          # See cube branch: ensure +z normal so pushpull(height) extrudes up.
+          face.reverse! if face.normal.z < 0
           face.pushpull(height)
-          
-          result = { 
-            id: group.entityID,
-            success: true
-          }
+
+          result = bounds_result(group)
           log "Created cylinder, returning result: #{result.inspect}"
           result
         rescue StandardError => e
@@ -425,10 +442,7 @@ module SU_MCP
             end
           end
           
-          result = { 
-            id: group.entityID,
-            success: true
-          }
+          result = bounds_result(group)
           log "Created sphere, returning result: #{result.inspect}"
           result
         rescue StandardError => e
@@ -465,18 +479,19 @@ module SU_MCP
           
           # Create the circular face for the base
           base = group.entities.add_face(circle_points)
-          
+
+          # Keep base normal pointing -z so the cone sits below the apex
+          # (and sphere/cone bookkeeping stays consistent with cube/cylinder).
+          base.reverse! if base.normal.z > 0
+
           # Create the cone sides
           (0...num_segments).each do |i|
             j = (i + 1) % num_segments
             # Create a triangular face from two adjacent points on the circle to the apex
             group.entities.add_face(circle_points[i], circle_points[j], apex)
           end
-          
-          result = { 
-            id: group.entityID,
-            success: true
-          }
+
+          result = bounds_result(group)
           log "Created cone, returning result: #{result.inspect}"
           result
         rescue StandardError => e
@@ -518,13 +533,29 @@ module SU_MCP
       
       if entity
         log "Found entity: #{entity.inspect}"
-        
-        # Handle position
+
+        # `move_to` places the entity so its bounds.min lands at the given XYZ.
+        # This is the obvious "put this here" semantic — distinct from `position`,
+        # which is a relative delta and is preserved for backwards compatibility.
+        if params["move_to"]
+          target = params["move_to"]
+          current_min = entity.bounds.min
+          delta = Geom::Vector3d.new(
+            target[0] - current_min.x,
+            target[1] - current_min.y,
+            target[2] - current_min.z
+          )
+          log "Moving bounds.min from #{[current_min.x.to_f, current_min.y.to_f, current_min.z.to_f].inspect} to #{target.inspect}"
+          entity.transform!(Geom::Transformation.translation(delta))
+        end
+
+        # `position` is a relative translation applied on top of the entity's
+        # current transform. Passing [0,0,0] is a no-op. Use `move_to` for
+        # absolute placement.
         if params["position"]
           pos = params["position"]
-          log "Transforming position to #{pos.inspect}"
-          
-          # Create a transformation to move the entity
+          log "Translating by #{pos.inspect} (relative)"
+
           translation = Geom::Transformation.translation(Geom::Point3d.new(pos[0], pos[1], pos[2]))
           entity.transform!(translation)
         end
@@ -566,8 +597,8 @@ module SU_MCP
           scaling = Geom::Transformation.scaling(center, scale[0], scale[1], scale[2])
           entity.transform!(scaling)
         end
-        
-        { success: true, id: entity.entityID }
+
+        bounds_result(entity)
       else
         raise "Entity not found"
       end
