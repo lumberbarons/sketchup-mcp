@@ -103,6 +103,37 @@ class TestJsonrpcRouting < Minitest::Test
     assert_equal 42, converted["id"]
   end
 
+  def test_legacy_command_with_no_parameters_passes_nil_arguments
+    server = SpyServer.new
+    server.send(:handle_jsonrpc_request,
+      "jsonrpc" => "2.0",
+      "command" => "get_selection",
+      "id"      => 7)
+
+    assert_equal 1, server.tool_calls.length
+    converted = server.tool_calls.first
+    assert_equal "tools/call",     converted["method"]
+    assert_equal "get_selection",  converted["params"]["name"]
+    assert_nil converted["params"]["arguments"]
+  end
+
+  def test_command_takes_precedence_over_method
+    server = SpyServer.new
+    server.send(:handle_jsonrpc_request,
+      "jsonrpc"    => "2.0",
+      "command"    => "get_selection",
+      "method"     => "tools/call",
+      "parameters" => { "foo" => "bar" },
+      "id"         => 8)
+
+    assert_equal 1, server.tool_calls.length
+    converted = server.tool_calls.first
+    # Legacy path wins: name comes from "command", not the params of an
+    # already-formed tools/call request.
+    assert_equal "get_selection",      converted["params"]["name"]
+    assert_equal({ "foo" => "bar" }, converted["params"]["arguments"])
+  end
+
   def test_tools_call_method_dispatches_to_handle_tool_call
     server = SpyServer.new
     request = {
