@@ -24,7 +24,13 @@ The system consists of two main components:
 
 ### Python Packaging
 
-We're using uv so you'll need to ```brew install uv```
+We're using uv, so you'll need to install it. On macOS:
+
+```bash
+brew install uv
+```
+
+For other platforms see the [uv install docs](https://docs.astral.sh/uv/getting-started/installation/).
 
 ### Sketchup Extension
 
