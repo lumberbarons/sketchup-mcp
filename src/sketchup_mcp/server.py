@@ -65,7 +65,7 @@ class SketchupConnection:
                     try:
                         data = b''.join(chunks)
                         json.loads(data.decode('utf-8'))
-                        logger.info(f"Received complete response ({len(data)} bytes)")
+                        logger.debug(f"Received complete response ({len(data)} bytes)")
                         return data
                     except json.JSONDecodeError:
                         continue
@@ -83,7 +83,7 @@ class SketchupConnection:
             
         if chunks:
             data = b''.join(chunks)
-            logger.info(f"Returning data after receive completion ({len(data)} bytes)")
+            logger.debug(f"Returning data after receive completion ({len(data)} bytes)")
             try:
                 json.loads(data.decode('utf-8'))
                 return data
@@ -131,22 +131,22 @@ class SketchupConnection:
         
         while retry_count <= max_retries:
             try:
-                logger.info(f"Sending JSON-RPC request: {request}")
-                
-                # Log the exact bytes being sent
                 request_bytes = json.dumps(request).encode('utf-8') + b'\n'
-                logger.info(f"Raw bytes being sent: {request_bytes}")
-                
+                tool_name = request.get("params", {}).get("name", request.get("method"))
+                logger.info(f"calling tool {tool_name} ({len(request_bytes)} bytes)")
+                logger.debug(f"Sending JSON-RPC request: {request}")
+                logger.debug(f"Raw bytes being sent: {request_bytes}")
+
                 self.sock.sendall(request_bytes)
-                logger.info(f"Request sent, waiting for response...")
-                
+                logger.debug("Request sent, waiting for response...")
+
                 self.sock.settimeout(15.0)
-                
+
                 response_data = self.receive_full_response(self.sock)
-                logger.info(f"Received {len(response_data)} bytes of data")
-                
+                logger.debug(f"Received {len(response_data)} bytes of data")
+
                 response = json.loads(response_data.decode('utf-8'))
-                logger.info(f"Response parsed: {response}")
+                logger.debug(f"Response parsed: {response}")
 
                 if not isinstance(response, dict):
                     return response
