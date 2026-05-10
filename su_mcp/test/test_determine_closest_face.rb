@@ -52,9 +52,4 @@ class TestDetermineClosestFace < Minitest::Test
     assert_equal :south, closest(0, -1, 1)
   end
 
-  def test_normalize_is_called_on_input
-    v = FakeVector.new(3, 0, 0)
-    @server.send(:determine_closest_face, v)
-    assert_in_delta 1.0, v.x, 1e-9
-  end
 end

@@ -1319,9 +1319,6 @@ module SU_MCP
     end
     
     def determine_closest_face(direction_vector)
-      # Normalize the direction vector
-      direction_vector.normalize!
-      
       # Determine which axis has the largest component
       x_abs = direction_vector.x.abs
       y_abs = direction_vector.y.abs
