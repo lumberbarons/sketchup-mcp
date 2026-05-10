@@ -8,12 +8,16 @@ class TestCalculatePositionOnFace < Minitest::Test
       FakePoint.new(10, 20, 30),
       FakePoint.new(5, 10, 15),
     )
+    # Fixtures are picked so width/2 != oy and height/2 != oz: every
+    # in-face coordinate differs from the corresponding bounds.center
+    # value, so dropping the offset arithmetic in production breaks at
+    # least one assertion per direction.
     @width   = 4
     @height  = 6
     @depth   = 8
-    @ox      = 1
-    @oy      = 2
-    @oz      = 3
+    @ox      = 5
+    @oy      = 7
+    @oz      = 11
   end
 
   def position(face)
@@ -24,27 +28,27 @@ class TestCalculatePositionOnFace < Minitest::Test
   end
 
   def test_east_anchors_to_max_x
-    assert_equal [10, 10, 15], position(:east)
+    assert_equal [10, 15, 23], position(:east)
   end
 
   def test_west_anchors_to_min_x
-    assert_equal [0, 10, 15], position(:west)
+    assert_equal [0, 15, 23], position(:west)
   end
 
   def test_north_anchors_to_max_y
-    assert_equal [4, 20, 15], position(:north)
+    assert_equal [8, 20, 23], position(:north)
   end
 
   def test_south_anchors_to_min_y
-    assert_equal [4, 0, 15], position(:south)
+    assert_equal [8, 0, 23], position(:south)
   end
 
   def test_top_anchors_to_max_z
-    assert_equal [4, 9, 30], position(:top)
+    assert_equal [8, 14, 30], position(:top)
   end
 
   def test_bottom_anchors_to_min_z
-    assert_equal [4, 9, 0], position(:bottom)
+    assert_equal [8, 14, 0], position(:bottom)
   end
 
   # With zero offsets the in-face position should land on the face center
