@@ -62,13 +62,15 @@ Once connected, Claude can interact with Sketchup using the following capabiliti
 
 #### Tools
 
-* `get_scene_info` - Gets information about the current Sketchup scene
-* `get_selected_components` - Gets information about currently selected components
-* `create_component` - Create a new component with specified parameters
-* `delete_component` - Remove a component from the scene
+* `create_component` - Create a new component with specified type, position, and dimensions
+* `delete_component` - Remove a component from the scene by ID
 * `transform_component` - Move, rotate, or scale a component
-* `set_material` - Apply materials to components
-* `export_scene` - Export the current scene to various formats
+* `get_selection` - Get information about currently selected components
+* `set_material` - Apply a material or color to a component
+* `export_scene` - Export the current scene (default format: `skp`)
+* `create_mortise_tenon` - Create a mortise-and-tenon joint between two components
+* `create_dovetail` - Create a dovetail joint between two components
+* `create_finger_joint` - Create a finger (box) joint between two components
 * `eval_ruby` - Execute arbitrary Ruby code in SketchUp for advanced operations
 
 ### Example Commands
@@ -76,10 +78,11 @@ Once connected, Claude can interact with Sketchup using the following capabiliti
 Here are some examples of what you can ask Claude to do:
 
 * "Create a simple house model with a roof and windows"
-* "Select all components and get their information"
+* "Get the current selection and tell me what's in it"
 * "Make the selected component red"
 * "Move the selected component 10 units up"
 * "Export the current scene as a 3D model"
+* "Join those two boards with a dovetail joint"
 * "Create a complex arts and crafts cabinet using Ruby code"
 
 ## Troubleshooting
