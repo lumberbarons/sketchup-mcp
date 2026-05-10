@@ -12,7 +12,7 @@ extension (`su_mcp`) that runs inside SketchUp itself.
 | `su_mcp/` | SketchUp Ruby extension. `su_mcp.rb` is the loader; `su_mcp/main.rb` is the in-process TCP server and tool dispatcher. | Adding or changing the SketchUp-side handler for an MCP tool, debugging Ruby errors, modifying joinery code. |
 | `tests/` | Pytest suite for the Python server. `test_sketchup_client.py` covers the TCP client; `test_server_tools.py` covers tool wiring. | Adding tests for new tools, reproducing client/server bugs without SketchUp running. |
 | `examples/` | Ruby snippets bundled in `.py` wrappers, demonstrating what to send through `eval_ruby`. | Looking for reusable Ruby code to pass through `eval_ruby`, or writing a new demo. |
-| `build_rbz.sh` | Build script that zips `su_mcp/` into `su_mcp_v<version>.rbz` for Extension Manager. | Cutting a new extension build. |
+| `scripts/build_rbz.sh` | Build script that zips `su_mcp/` into `su_mcp_v<version>.rbz` for Extension Manager. Also runnable via `make rbz`. | Cutting a new extension build. |
 | `pyproject.toml` | Python package metadata, dependencies, ruff config. Version lives here and in `server.py:__version__`. | Bumping the Python package version, adding a dependency. |
 | `su_mcp/extension.json` | SketchUp extension metadata. Version lives here and is read by `build_rbz.sh`. | Bumping the extension version. |
 
@@ -23,7 +23,7 @@ make install      # uv sync with test + lint extras
 make test         # pytest
 make lint         # ruff check + ruff format --check
 make format       # ruff check --fix + ruff format
-./build_rbz.sh    # build the SketchUp .rbz
+make rbz          # build the SketchUp .rbz (runs scripts/build_rbz.sh)
 uvx sketchup-mcp  # run the MCP server (expects extension on localhost:9876)
 ```
 

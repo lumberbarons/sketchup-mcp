@@ -1,4 +1,4 @@
-.PHONY: test lint format install
+.PHONY: test lint format install rbz
 
 install:
 	uv sync --extra test --extra lint
@@ -13,3 +13,6 @@ lint:
 format:
 	uv run ruff check --fix .
 	uv run ruff format .
+
+rbz:
+	./scripts/build_rbz.sh

@@ -3,7 +3,7 @@
 # A .rbz is just a zip; SketchUp's Extension Manager reads it directly.
 set -euo pipefail
 
-cd "$(dirname "$0")/su_mcp"
+cd "$(dirname "$0")/../su_mcp"
 
 version=$(python3 -c 'import json; print(json.load(open("extension.json"))["version"])')
 output="../su_mcp_v${version}.rbz"
