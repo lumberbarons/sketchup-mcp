@@ -1,4 +1,8 @@
 require_relative "test_helper"
+require "minitest/mock"
+
+FakeEntity = Struct.new(:entityID, :typename)
+FakeModel  = Struct.new(:entities)
 
 # Spy server: captures handle_tool_call invocations so the legacy
 # command-format conversion and tools/call dispatch can be asserted
@@ -58,6 +62,29 @@ class TestJsonrpcRouting < Minitest::Test
     assert_equal [],   response[:result][:resources]
     assert_equal true, response[:result][:success]
     assert_equal 3,    response[:id]
+  end
+
+  def test_resources_list_with_active_model_maps_entities
+    server = TestServer.new
+    fake_model = FakeModel.new([
+      FakeEntity.new(101, "Group"),
+      FakeEntity.new(202, "ComponentInstance"),
+    ])
+
+    response = Sketchup.stub :active_model, fake_model do
+      server.send(:handle_jsonrpc_request,
+        "jsonrpc" => "2.0", "method" => "resources/list", "id" => 5)
+    end
+
+    assert_equal 5,    response[:id]
+    assert_equal true, response[:result][:success]
+    assert_equal(
+      [
+        { id: 101, type: "group" },
+        { id: 202, type: "componentinstance" },
+      ],
+      response[:result][:resources],
+    )
   end
 
   def test_legacy_command_format_is_converted_to_tools_call
