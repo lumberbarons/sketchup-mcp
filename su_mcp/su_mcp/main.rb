@@ -222,6 +222,8 @@ module SU_MCP
           create_component(args)
         when "create_extrusion"
           create_extrusion(args)
+        when "batch_create"
+          batch_create(args)
         when "delete_component"
           delete_component(args)
         when "transform_component"
@@ -583,6 +585,122 @@ module SU_MCP
     # the dispatcher already strips.
     def apply_material(group, material_name)
       set_material({ "id" => group.entityID, "material" => material_name })
+    end
+
+    KNOWN_BATCH_OPS = %w[cube cylinder sphere cone extrusion translate move_to delete].freeze
+
+    # Run many create / mutate / delete ops as a single SketchUp transaction.
+    # The whole batch is one undo step. Any exception during dispatch aborts
+    # the transaction (model.abort_operation) and re-raises with the failing
+    # op's index, so the caller sees the model unchanged.
+    def batch_create(params)
+      operations = params["operations"]
+      raise "'operations' must be an array" unless operations.is_a?(Array)
+      operations.each_with_index { |op, i| validate_batch_op(op, i) }
+
+      transaction_name = (params["transaction_name"] || "MCP batch").to_s
+      model = Sketchup.active_model
+      results = []
+      failed_index = nil
+      failed_op = nil
+
+      model.start_operation(transaction_name, true)
+      begin
+        operations.each_with_index do |op, i|
+          failed_index = i
+          failed_op = op
+          results << execute_batch_op(op)
+        end
+        failed_index = nil
+        model.commit_operation
+      rescue StandardError => e
+        model.abort_operation
+        completed = results.length
+        raise "batch_create operation ##{failed_index} (#{failed_op["op"].inspect}) failed: #{e.message}. Aborted; #{completed} prior op(s) rolled back."
+      end
+
+      { success: true, count: results.length, results: results }
+    end
+
+    def validate_batch_op(op, index)
+      raise "operation ##{index} must be a Hash, got #{op.class}" unless op.is_a?(Hash)
+      op_name = op["op"].to_s
+      unless KNOWN_BATCH_OPS.include?(op_name)
+        raise "operation ##{index} has unknown op #{op["op"].inspect} (expected one of: #{KNOWN_BATCH_OPS.join(', ')})"
+      end
+    end
+
+    def execute_batch_op(op)
+      case op["op"].to_s
+      when "cube", "cylinder", "sphere", "cone"
+        create_named_primitive(op)
+      when "extrusion"
+        extrusion_params = {
+          "name" => op["name"],
+          "profile" => op["profile"],
+          "extrude_axis" => op["extrude_axis"],
+          "extrude_from" => op["extrude_from"],
+          "extrude_to" => op["extrude_to"]
+        }
+        extrusion_params["material"] = op["material"] if op["material"]
+        create_extrusion(extrusion_params)
+      when "translate"
+        transform_component(id_or_name_params(op["id_or_name"]).merge("position" => op["delta"]))
+      when "move_to"
+        transform_component(id_or_name_params(op["id_or_name"]).merge("move_to" => op["target"]))
+      when "delete"
+        entity = resolve_entity(id_or_name_params(op["id_or_name"]))
+        id = entity.entityID
+        entity.erase!
+        { id: id, success: true }
+      else
+        # validate_batch_op already screened this; defensive only.
+        raise "Unknown batch op: #{op["op"].inspect}"
+      end
+    end
+
+    # Build a transform_component / delete_component params hash from a raw
+    # `id_or_name` value. Integer → id; String → name. Strict: a numeric
+    # string is still treated as a name, so the integer-vs-string distinction
+    # is what selects the lookup mode (per the bead's contract).
+    def id_or_name_params(raw)
+      case raw
+      when Integer then { "id" => raw }
+      when String then { "name" => raw }
+      else
+        raise "id_or_name must be an Integer (entityID) or String (group name), got #{raw.class}"
+      end
+    end
+
+    # Compute the dimensions array that create_component's per-shape code
+    # expects, from the more natural radius/height batch-op parameterization.
+    def primitive_dimensions(op)
+      case op["op"].to_s
+      when "cube"
+        op["dimensions"]
+      when "cylinder", "cone"
+        r = op["radius"].to_f
+        [r * 2, r * 2, op["height"].to_f]
+      when "sphere"
+        r = op["radius"].to_f
+        [r * 2, r * 2, r * 2]
+      end
+    end
+
+    def create_named_primitive(op)
+      result = create_component({
+        "type" => op["op"].to_s,
+        "position" => op["position"],
+        "dimensions" => primitive_dimensions(op)
+      })
+      # create_component returns the new group's entityID; look it up so we
+      # can name it and apply material before reporting bounds.
+      group = Sketchup.active_model.find_entity_by_id(result[:id])
+      group.name = op["name"].to_s if op["name"]
+      apply_material(group, op["material"]) if op["material"]
+      out = bounds_result(group)
+      out[:name] = group.name
+      out
     end
 
     # Resolve an entity from `params` by either `id` (entity ID) or `name`

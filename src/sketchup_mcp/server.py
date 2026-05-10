@@ -244,6 +244,53 @@ def transform_component(
 
 
 @mcp.tool()
+def batch_create(
+    ctx: Context,
+    operations: list[dict[str, Any]],
+    transaction_name: str = "MCP batch",
+) -> str:
+    """Run many create / mutate / delete operations as a single SketchUp transaction.
+
+    All operations execute inside one `model.start_operation` / `commit_operation`
+    pair, so the whole batch is a single undo step. If any operation fails the
+    transaction is rolled back via `model.abort_operation` — there is no partial
+    state in the model. The error response identifies which operation failed.
+
+    Each item in `operations` is a dict with an `op` key picking the action:
+
+    Creates (return `{id, name, bounds}`):
+      - `{"op": "cube",      "name", "position": [x,y,z], "dimensions": [dx,dy,dz], "material"?}`
+      - `{"op": "cylinder",  "name", "position", "radius", "height", "material"?}`
+      - `{"op": "sphere",    "name", "position", "radius",            "material"?}`
+      - `{"op": "cone",      "name", "position", "radius", "height", "material"?}`
+      - `{"op": "extrusion", "name", "profile", "extrude_axis", "extrude_from",
+                                     "extrude_to", "material"?}`
+
+    Mutations (return `{id, bounds}`):
+      - `{"op": "translate", "id_or_name", "delta":  [dx, dy, dz]}` — relative
+      - `{"op": "move_to",   "id_or_name", "target": [x,  y,  z]}` — absolute,
+        anchors `bounds.min` to `target` (same semantics as
+        `transform_component`'s `move_to`).
+
+    Deletes (return `{id}`):
+      - `{"op": "delete", "id_or_name"}`
+
+    `id_or_name` is an integer entityID or a string group name. A name that
+    matches multiple groups errors — no ambiguous targets.
+
+    operations: ordered list of operation dicts.
+    transaction_name: label for SketchUp's undo stack (default "MCP batch").
+
+    Returns `{success, results: [...], count}` with results in input order.
+    """
+    return _call_sketchup(
+        ctx,
+        "batch_create",
+        {"transaction_name": transaction_name, "operations": operations},
+    )
+
+
+@mcp.tool()
 def create_extrusion(
     ctx: Context,
     name: str,

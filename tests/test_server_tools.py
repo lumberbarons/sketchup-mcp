@@ -91,6 +91,7 @@ async def test_every_tool_is_registered(fake: FakeSketchupClient) -> None:
         listed = await session.list_tools()
     names = {t.name for t in listed.tools}
     assert names == {
+        "batch_create",
         "create_component",
         "create_extrusion",
         "delete_component",
@@ -653,3 +654,145 @@ async def test_create_extrusion_omits_unset_material(
             },
         )
     assert "material" not in fake.last_arguments
+
+
+# ---------------------------------------------------------------------------
+# batch_create — wire-shape tests. Per-op dispatch and the start/commit/abort
+# transaction logic live in Ruby (see su_mcp/test/test_batch_create.rb).
+# These tests confirm the Python tool faithfully forwards `operations` and
+# `transaction_name`, and that a failure envelope round-trips with the
+# message the Ruby side raises after aborting.
+# ---------------------------------------------------------------------------
+
+
+async def test_batch_create_forwards_mixed_ops(fake: FakeSketchupClient) -> None:
+    """A realistic batch: a couple of creates, a relative translate, an
+    absolute move_to, and a delete. All five op shapes must round-trip
+    unchanged so the Ruby dispatcher sees what the caller wrote."""
+    ops = [
+        {
+            "op": "cube",
+            "name": "Foundation Block 1",
+            "position": [0, 0, 0],
+            "dimensions": [16, 16, 8],
+        },
+        {
+            "op": "cylinder",
+            "name": "Post 1",
+            "position": [10, 10, 0],
+            "radius": 1.75,
+            "height": 96,
+        },
+        {"op": "translate", "id_or_name": 42, "delta": [0, 0, 1.5]},
+        {"op": "move_to", "id_or_name": "Ridge", "target": [0, 0, 96]},
+        {"op": "delete", "id_or_name": 99},
+    ]
+    async with make_session() as session:
+        await session.call_tool(
+            "batch_create", {"operations": ops, "transaction_name": "Foundation pass"}
+        )
+    assert fake.last_tool_name == "batch_create"
+    assert fake.last_arguments == {
+        "transaction_name": "Foundation pass",
+        "operations": ops,
+    }
+
+
+async def test_batch_create_defaults_transaction_name(
+    fake: FakeSketchupClient,
+) -> None:
+    async with make_session() as session:
+        await session.call_tool(
+            "batch_create",
+            {
+                "operations": [
+                    {
+                        "op": "sphere",
+                        "name": "Ball",
+                        "position": [0, 0, 0],
+                        "radius": 1,
+                    }
+                ]
+            },
+        )
+    assert fake.last_arguments["transaction_name"] == "MCP batch"
+
+
+async def test_batch_create_name_based_mutates_round_trip(
+    fake: FakeSketchupClient,
+) -> None:
+    """Name-based references for mutates and deletes are the headline win of
+    composing batch_create with find_groups — make sure strings stay strings."""
+    ops = [
+        {"op": "translate", "id_or_name": "Rafter W 5", "delta": [0, 0, 0.5]},
+        {"op": "delete", "id_or_name": "Old Rafter"},
+    ]
+    async with make_session() as session:
+        await session.call_tool("batch_create", {"operations": ops})
+    forwarded = fake.last_arguments["operations"]
+    assert forwarded[0]["id_or_name"] == "Rafter W 5"
+    assert isinstance(forwarded[0]["id_or_name"], str)
+    assert forwarded[1]["id_or_name"] == "Old Rafter"
+    assert isinstance(forwarded[1]["id_or_name"], str)
+
+
+async def test_batch_create_forwards_extrusion_op(fake: FakeSketchupClient) -> None:
+    """Extrusion params include a nested list (profile) and floats —
+    confirm the whole shape round-trips."""
+    extrusion_op = {
+        "op": "extrusion",
+        "name": "Rafter W 1",
+        "profile": [
+            [-12, 89.625],
+            [59.25, 125.25],
+            [59.25, 131.399],
+            [-12, 95.774],
+        ],
+        "extrude_axis": "y",
+        "extrude_from": 0.0,
+        "extrude_to": 1.5,
+    }
+    async with make_session() as session:
+        await session.call_tool("batch_create", {"operations": [extrusion_op]})
+    assert fake.last_arguments["operations"][0] == extrusion_op
+
+
+async def test_batch_create_failure_envelope_round_trip(
+    fake: FakeSketchupClient,
+) -> None:
+    """When the Ruby side aborts the transaction and raises, the error message
+    must surface intact in the failure envelope. The Ruby-side rollback itself
+    is covered by su_mcp/test/test_batch_create.rb."""
+    fake.next_error = RuntimeError(
+        'batch_create operation #2 ("cube") failed: bad face. Aborted; 2 prior op(s) rolled back.'
+    )
+    async with make_session() as session:
+        result = await session.call_tool(
+            "batch_create",
+            {
+                "operations": [
+                    {"op": "cube", "name": "A", "position": [0, 0, 0], "dimensions": [1, 1, 1]},
+                    {"op": "cube", "name": "B", "position": [2, 0, 0], "dimensions": [1, 1, 1]},
+                    {"op": "cube", "name": "C", "position": [4, 0, 0], "dimensions": [1, 1, 1]},
+                ]
+            },
+        )
+    env = envelope(result)
+    assert env["success"] is False
+    assert env["result"] is None
+    assert "operation #2" in env["error"]
+    assert "rolled back" in env["error"]
+
+
+async def test_batch_create_preserves_op_order(fake: FakeSketchupClient) -> None:
+    """Order matters — a later move_to depends on an earlier create. Don't
+    let any future "optimization" reorder the operations array."""
+    ops = [
+        {"op": "cube", "name": "First", "position": [0, 0, 0], "dimensions": [1, 1, 1]},
+        {"op": "cube", "name": "Second", "position": [2, 0, 0], "dimensions": [1, 1, 1]},
+        {"op": "cube", "name": "Third", "position": [4, 0, 0], "dimensions": [1, 1, 1]},
+    ]
+    async with make_session() as session:
+        await session.call_tool("batch_create", {"operations": ops})
+    forwarded = fake.last_arguments["operations"]
+    assert [op["name"] for op in forwarded] == ["First", "Second", "Third"]
