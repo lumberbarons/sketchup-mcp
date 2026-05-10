@@ -102,30 +102,23 @@ class SketchupClient:
             raise Exception(response["error"].get("message", "Unknown error from Sketchup"))
         return response.get("result", {})
 
-# Module-level client. Stateless — every send_command opens its own socket.
-_sketchup_client: Optional["SketchupClient"] = None
-
-
-def get_sketchup_connection() -> "SketchupClient":
-    """Return the shared SketchupClient (lazily constructed)."""
-    global _sketchup_client
-    if _sketchup_client is None:
-        _sketchup_client = SketchupClient(host="localhost", port=9876)
-    return _sketchup_client
-
-
 @asynccontextmanager
 async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
-    """Probe SketchUp on startup so config errors surface early.
-    No long-lived socket is held — the client opens fresh sockets per call."""
+    """Construct the SketchUp client and probe reachability on startup.
+    The client is exposed to tools via the lifespan context, not a global."""
     logger.info("SketchupMCP server starting up")
-    client = get_sketchup_connection()
+    client = SketchupClient(host="localhost", port=9876)
     if not client.probe():
         logger.warning("Make sure the SketchUp extension is running and Start Server has been clicked")
     try:
-        yield {}
+        yield {"sketchup": client}
     finally:
         logger.info("SketchupMCP server shut down")
+
+
+def _client(ctx: Context) -> SketchupClient:
+    """Get the SketchupClient injected by the lifespan."""
+    return ctx.request_context.lifespan_context["sketchup"]
 
 # Create MCP server with lifespan support
 mcp = FastMCP(
@@ -146,7 +139,7 @@ def create_component(
     try:
         logger.info(f"create_component called with type={type}, position={position}, dimensions={dimensions}, request_id={ctx.request_id}")
         
-        sketchup = get_sketchup_connection()
+        sketchup = _client(ctx)
         
         params = {
             "name": "create_component",
@@ -178,7 +171,7 @@ def delete_component(
 ) -> str:
     """Delete a component by ID"""
     try:
-        sketchup = get_sketchup_connection()
+        sketchup = _client(ctx)
         result = sketchup.send_command(
             method="tools/call",
             params={
@@ -201,7 +194,7 @@ def transform_component(
 ) -> str:
     """Transform a component's position, rotation, or scale"""
     try:
-        sketchup = get_sketchup_connection()
+        sketchup = _client(ctx)
         arguments = {"id": id}
         if position is not None:
             arguments["position"] = position
@@ -226,7 +219,7 @@ def transform_component(
 def get_selection(ctx: Context) -> str:
     """Get currently selected components"""
     try:
-        sketchup = get_sketchup_connection()
+        sketchup = _client(ctx)
         result = sketchup.send_command(
             method="tools/call",
             params={
@@ -247,7 +240,7 @@ def set_material(
 ) -> str:
     """Set material for a component"""
     try:
-        sketchup = get_sketchup_connection()
+        sketchup = _client(ctx)
         result = sketchup.send_command(
             method="tools/call",
             params={
@@ -270,7 +263,7 @@ def export_scene(
 ) -> str:
     """Export the current scene"""
     try:
-        sketchup = get_sketchup_connection()
+        sketchup = _client(ctx)
         result = sketchup.send_command(
             method="tools/call",
             params={
@@ -301,7 +294,7 @@ def create_mortise_tenon(
     try:
         logger.info(f"create_mortise_tenon called with mortise_id={mortise_id}, tenon_id={tenon_id}, width={width}, height={height}, depth={depth}, offsets=({offset_x}, {offset_y}, {offset_z})")
         
-        sketchup = get_sketchup_connection()
+        sketchup = _client(ctx)
         
         result = sketchup.send_command(
             method="tools/call",
@@ -345,7 +338,7 @@ def create_dovetail(
     try:
         logger.info(f"create_dovetail called with tail_id={tail_id}, pin_id={pin_id}, width={width}, height={height}, depth={depth}, angle={angle}, num_tails={num_tails}")
         
-        sketchup = get_sketchup_connection()
+        sketchup = _client(ctx)
         
         result = sketchup.send_command(
             method="tools/call",
@@ -390,7 +383,7 @@ def create_finger_joint(
     try:
         logger.info(f"create_finger_joint called with board1_id={board1_id}, board2_id={board2_id}, width={width}, height={height}, depth={depth}, num_fingers={num_fingers}")
         
-        sketchup = get_sketchup_connection()
+        sketchup = _client(ctx)
         
         result = sketchup.send_command(
             method="tools/call",
@@ -426,7 +419,7 @@ def eval_ruby(
     try:
         logger.info(f"eval_ruby called with code length: {len(code)}")
         
-        sketchup = get_sketchup_connection()
+        sketchup = _client(ctx)
         
         result = sketchup.send_command(
             method="tools/call",
