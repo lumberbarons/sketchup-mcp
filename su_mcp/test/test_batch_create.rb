@@ -130,8 +130,14 @@ class TestBatchCreate < Minitest::Test
   def test_validate_accepts_every_known_op
     s = TestServer.new
     %w[cube cylinder sphere cone extrusion translate move_to delete].each do |op_name|
-      # Should not raise.
+      # Should not raise for the valid op_name…
       s.send(:validate_batch_op, { "op" => op_name }, 0)
+      # …and must raise for a perturbed variant. Pairing valid with invalid
+      # proves the validator actually distinguishes between them — a no-op
+      # validator would pass the first call but fail this assert_raises.
+      assert_raises(RuntimeError) do
+        s.send(:validate_batch_op, { "op" => "#{op_name}_oops" }, 0)
+      end
     end
   end
 
