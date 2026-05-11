@@ -5,22 +5,31 @@ require_relative "test_helper"
 # a live SketchUp; the helpers it delegates to are pure data + branching
 # and are the parts most likely to harbor logic bugs (especially the AABB
 # intersection rules), so we cover them in isolation.
+#
+# Fixtures are nested inside FindGroupsTestSupport so they cannot leak into
+# the shared top-level namespace and collide with sibling test files (which
+# can be loaded in the same process by the test runner).
 
-# A fake "BoundingBox" with .min and .max returning point structs.
-FakeFGBounds = Struct.new(:min, :max)
-FakeFGPoint = Struct.new(:x, :y, :z)
+module FindGroupsTestSupport
+  # A fake "BoundingBox" with .min and .max returning point structs.
+  FakeFGBounds = Struct.new(:min, :max)
+  FakeFGPoint = Struct.new(:x, :y, :z)
 
-def make_bounds(min_xyz, max_xyz)
-  FakeFGBounds.new(FakeFGPoint.new(*min_xyz), FakeFGPoint.new(*max_xyz))
-end
+  def self.make_bounds(min_xyz, max_xyz)
+    FakeFGBounds.new(FakeFGPoint.new(*min_xyz), FakeFGPoint.new(*max_xyz))
+  end
 
-class FakeFGGroup < Sketchup::Group
-end
+  class FakeFGGroup < Sketchup::Group
+  end
 
-class FakeFGComponent < Sketchup::ComponentInstance
+  class FakeFGComponent < Sketchup::ComponentInstance
+  end
 end
 
 class TestFindGroupsFilters < Minitest::Test
+  include FindGroupsTestSupport
+
+  def make_bounds(*args); FindGroupsTestSupport.make_bounds(*args); end
   def setup
     @server = TestServer.new
   end
@@ -147,29 +156,33 @@ class TestFindGroupsFilters < Minitest::Test
   end
 end
 
-# A find_groups-callable group. Exposes the attributes describe_match reads
-# (entityID, name, bounds) and is_a?(Sketchup::Group) via inheritance.
-class FakeFGFullGroup < Sketchup::Group
-  attr_reader :name, :entityID, :bounds
-  def initialize(name, id, bounds = nil)
-    @name = name
-    @entityID = id
-    @bounds = bounds || make_bounds([0, 0, 0], [1, 1, 1])
+module FindGroupsTestSupport
+  # A find_groups-callable group. Exposes the attributes describe_match reads
+  # (entityID, name, bounds) and is_a?(Sketchup::Group) via inheritance.
+  class FakeFGFullGroup < Sketchup::Group
+    attr_reader :name, :entityID, :bounds
+    def initialize(name, id, bounds = nil)
+      @name = name
+      @entityID = id
+      @bounds = bounds || FindGroupsTestSupport.make_bounds([0, 0, 0], [1, 1, 1])
+    end
+    def layer; nil; end
+    def material; nil; end
   end
-  def layer; nil; end
-  def material; nil; end
-end
 
-# TestServer subclass that bypasses resolve_search_root so find_groups can
-# run without a live SketchUp model. Set @fake_entities to drive the loop.
-class FindGroupsTestServer < TestServer
-  attr_accessor :fake_entities
-  def resolve_search_root(_model, _parent_id)
-    @fake_entities || []
+  # TestServer subclass that bypasses resolve_search_root so find_groups can
+  # run without a live SketchUp model. Set @fake_entities to drive the loop.
+  class FindGroupsTestServer < TestServer
+    attr_accessor :fake_entities
+    def resolve_search_root(_model, _parent_id)
+      @fake_entities || []
+    end
   end
 end
 
 class TestFindGroupsOrchestration < Minitest::Test
+  include FindGroupsTestSupport
+
   def setup
     @server = FindGroupsTestServer.new
   end
