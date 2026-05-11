@@ -133,3 +133,87 @@ class TestFindGroupsFilters < Minitest::Test
     assert_equal false, @server.send(:bounds_matches?, far, query)
   end
 end
+
+# A find_groups-callable group. Exposes the attributes describe_match reads
+# (entityID, name, bounds) and is_a?(Sketchup::Group) via inheritance.
+class FakeFGFullGroup < Sketchup::Group
+  attr_reader :name, :entityID, :bounds
+  def initialize(name, id, bounds = nil)
+    @name = name
+    @entityID = id
+    @bounds = bounds || make_bounds([0, 0, 0], [1, 1, 1])
+  end
+  def layer; nil; end
+  def material; nil; end
+end
+
+# TestServer subclass that bypasses resolve_search_root so find_groups can
+# run without a live SketchUp model. Set @fake_entities to drive the loop.
+class FindGroupsTestServer < TestServer
+  attr_accessor :fake_entities
+  def resolve_search_root(_model, _parent_id)
+    @fake_entities || []
+  end
+end
+
+class TestFindGroupsOrchestration < Minitest::Test
+  def setup
+    @server = FindGroupsTestServer.new
+  end
+
+  def test_mutual_exclusion_raises_when_both_filters_given
+    err = assert_raises(RuntimeError) do
+      @server.send(:find_groups,
+                   "name_prefix" => "WA", "name_pattern" => "^WA")
+    end
+    assert_match(/at most one/, err.message)
+    assert_match(/name_prefix/, err.message)
+    assert_match(/name_pattern/, err.message)
+  end
+
+  def test_limit_truncates_at_boundary
+    # 5 matching groups, limit=3 — expect exactly 3 returned, truncated=true.
+    # If '>= limit' were changed to '> limit', this would return 4.
+    @server.fake_entities = (1..5).map { |i| FakeFGFullGroup.new("G#{i}", i) }
+    result = @server.send(:find_groups, "limit" => 3)
+    assert_equal 3, result[:groups].length
+    assert_equal true, result[:truncated]
+  end
+
+  def test_limit_not_reached_does_not_truncate
+    @server.fake_entities = (1..2).map { |i| FakeFGFullGroup.new("G#{i}", i) }
+    result = @server.send(:find_groups, "limit" => 5)
+    assert_equal 2, result[:groups].length
+    assert_equal false, result[:truncated]
+  end
+
+  def test_default_limit_is_200
+    # Build 201 matches; the default limit should truncate at 200.
+    @server.fake_entities = (1..201).map { |i| FakeFGFullGroup.new("G#{i}", i) }
+    result = @server.send(:find_groups, {})
+    assert_equal 200, result[:groups].length
+    assert_equal true, result[:truncated]
+  end
+
+  def test_include_components_truthiness_coercion
+    # Pass a truthy non-boolean — should be coerced to true and include components.
+    comp = FakeFGComponent.new
+    comp.define_singleton_method(:name) { "C1" }
+    comp.define_singleton_method(:entityID) { 42 }
+    comp.define_singleton_method(:bounds) { FakeFGBounds.new(FakeFGPoint.new(0, 0, 0), FakeFGPoint.new(1, 1, 1)) }
+    comp.define_singleton_method(:layer) { nil }
+    comp.define_singleton_method(:material) { nil }
+    @server.fake_entities = [comp]
+    result = @server.send(:find_groups, "include_components" => "yes")
+    assert_equal 1, result[:groups].length
+
+    # Pass nil/false/missing — components excluded.
+    @server.fake_entities = [comp]
+    result2 = @server.send(:find_groups, "include_components" => nil)
+    assert_equal 0, result2[:groups].length
+
+    @server.fake_entities = [comp]
+    result3 = @server.send(:find_groups, {})
+    assert_equal 0, result3[:groups].length
+  end
+end
