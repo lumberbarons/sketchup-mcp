@@ -158,10 +158,16 @@ class TestBatchCreate < Minitest::Test
   def test_default_transaction_name
     model = StubModel.new
     server = BatchTestServer.new(model)
+    out = nil
     BatchTestServer.with_model(model) do
-      server.send(:batch_create,{ "operations" => [{ "op" => "cube", "name" => "A" }] })
+      out = server.send(:batch_create,{ "operations" => [{ "op" => "cube", "name" => "A" }] })
     end
-    assert_equal "MCP batch", model.calls.first[1]
+    # Pin the exact lifecycle: start with default name → commit. A regression
+    # that returns without committing (or without running ops) would slip past
+    # a membership-only assertion.
+    assert_equal [[:start, "MCP batch", true], [:commit]], model.calls
+    assert_equal true, out[:success]
+    assert_equal 1, out[:count]
   end
 
   def test_failed_op_aborts_transaction_and_no_commit
@@ -186,12 +192,10 @@ class TestBatchCreate < Minitest::Test
       assert_match(/2 prior op\(s\) rolled back/, err.message)
     end
 
-    # Critical: start fires, abort fires, commit MUST NOT fire. If anyone
-    # ever swaps the order or forgets the rescue, the model would commit a
-    # half-built batch.
-    assert_equal :start, model.calls.first[0]
-    assert_includes model.calls.map(&:first), :abort
-    refute_includes model.calls.map(&:first), :commit
+    # Pin the exact lifecycle: start → abort, with nothing else. A bug that
+    # called abort_operation twice (or any other extra lifecycle call) would
+    # slip past a membership-only assertion.
+    assert_equal [[:start, "MCP batch", true], [:abort]], model.calls
   end
 
   def test_failure_on_first_op_still_aborts
