@@ -258,3 +258,134 @@ class TestBatchCreate < Minitest::Test
     assert_empty model.calls
   end
 end
+
+# Records the per-op dispatch in execute_batch_op (the real method, not the
+# BatchTestServer stub). Spies on the underlying methods so we can prove
+# each op-kind reaches the right one with the right params.
+class DispatchSpyServer < TestServer
+  attr_reader :calls
+  def initialize
+    super
+    @calls = []
+  end
+  def create_named_primitive(op)
+    @calls << [:create_named_primitive, op]
+    { id: 1, success: true }
+  end
+  def create_extrusion(params)
+    @calls << [:create_extrusion, params]
+    { id: 2, success: true }
+  end
+  def transform_component(params)
+    @calls << [:transform_component, params]
+    { id: 3, success: true }
+  end
+  def resolve_entity(params, _model = nil)
+    @calls << [:resolve_entity, params]
+    FakeErasable.new(99)
+  end
+end
+
+class FakeErasable
+  attr_reader :entityID, :erased
+  def initialize(id)
+    @entityID = id
+    @erased = false
+  end
+  def erase!
+    @erased = true
+  end
+end
+
+class TestExecuteBatchOpDispatch < Minitest::Test
+  def setup
+    @server = DispatchSpyServer.new
+  end
+
+  def test_cube_op_dispatches_to_create_named_primitive
+    op = { "op" => "cube", "name" => "Box", "dimensions" => [1, 2, 3] }
+    @server.send(:execute_batch_op, op)
+    assert_equal [[:create_named_primitive, op]], @server.calls
+  end
+
+  def test_cylinder_op_dispatches_to_create_named_primitive
+    op = { "op" => "cylinder", "name" => "Cyl", "radius" => 1, "height" => 2 }
+    @server.send(:execute_batch_op, op)
+    assert_equal [[:create_named_primitive, op]], @server.calls
+  end
+
+  def test_sphere_op_dispatches_to_create_named_primitive
+    op = { "op" => "sphere", "name" => "Sph", "radius" => 1 }
+    @server.send(:execute_batch_op, op)
+    assert_equal [[:create_named_primitive, op]], @server.calls
+  end
+
+  def test_cone_op_dispatches_to_create_named_primitive
+    op = { "op" => "cone", "name" => "Cone", "radius" => 1, "height" => 2 }
+    @server.send(:execute_batch_op, op)
+    assert_equal [[:create_named_primitive, op]], @server.calls
+  end
+
+  def test_extrusion_op_assembles_params_and_calls_create_extrusion
+    op = {
+      "op" => "extrusion",
+      "name" => "Beam",
+      "profile" => [[0, 0], [1, 0], [1, 1]],
+      "extrude_axis" => "z",
+      "extrude_from" => 0,
+      "extrude_to" => 5,
+      "material" => "wood"
+    }
+    @server.send(:execute_batch_op, op)
+    method, params = @server.calls.first
+    assert_equal :create_extrusion, method
+    assert_equal "Beam", params["name"]
+    assert_equal [[0, 0], [1, 0], [1, 1]], params["profile"]
+    assert_equal "z", params["extrude_axis"]
+    assert_equal 0, params["extrude_from"]
+    assert_equal 5, params["extrude_to"]
+    assert_equal "wood", params["material"]
+  end
+
+  def test_extrusion_op_omits_material_key_when_absent
+    op = {
+      "op" => "extrusion",
+      "name" => "Beam",
+      "profile" => [],
+      "extrude_axis" => "z",
+      "extrude_from" => 0,
+      "extrude_to" => 5
+    }
+    @server.send(:execute_batch_op, op)
+    _method, params = @server.calls.first
+    refute params.key?("material"), "material should not be set when absent in op"
+  end
+
+  def test_translate_op_dispatches_to_transform_component_with_position
+    op = { "op" => "translate", "id_or_name" => "Ridge", "delta" => [1, 0, 0] }
+    @server.send(:execute_batch_op, op)
+    method, params = @server.calls.first
+    assert_equal :transform_component, method
+    assert_equal "Ridge", params["name"]
+    assert_equal [1, 0, 0], params["position"]
+    refute params.key?("move_to"), "translate must not use move_to key"
+  end
+
+  def test_move_to_op_dispatches_to_transform_component_with_move_to
+    op = { "op" => "move_to", "id_or_name" => 42, "target" => [5, 5, 5] }
+    @server.send(:execute_batch_op, op)
+    method, params = @server.calls.first
+    assert_equal :transform_component, method
+    assert_equal 42, params["id"]
+    assert_equal [5, 5, 5], params["move_to"]
+    refute params.key?("position"), "move_to must not use position key"
+  end
+
+  def test_delete_op_resolves_entity_and_erases
+    op = { "op" => "delete", "id_or_name" => "Old" }
+    result = @server.send(:execute_batch_op, op)
+    assert_equal [:resolve_entity, { "name" => "Old" }], @server.calls.first
+    assert_equal 99, result[:id]
+    assert_equal true, result[:success]
+  end
+end
