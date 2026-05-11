@@ -213,10 +213,12 @@ module SU_MCP
 
     def handle_tool_call(request)
       log "Handling tool call: #{request.inspect}"
-      tool_name = request["params"]["name"]
-      args = request["params"]["arguments"]
 
       begin
+        params = request["params"] or raise "tools/call request is missing 'params'"
+        tool_name = params["name"]
+        args = params["arguments"]
+
         result = case tool_name
         when "create_component"
           create_component(args)

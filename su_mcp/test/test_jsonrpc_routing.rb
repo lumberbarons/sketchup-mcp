@@ -189,4 +189,32 @@ class TestJsonrpcRouting < Minitest::Test
     assert_same request, server.tool_calls.first
     assert_equal({ jsonrpc: "2.0", result: { success: true }, id: 99 }, response)
   end
+
+  # -- malformed tools/call requests -----------------------------------------
+
+  def test_tools_call_with_missing_params_returns_jsonrpc_error
+    # Real MCP clients can send broken requests; handle_tool_call must convert
+    # the resulting nil-deref into the rescue-branch error, not crash. If the
+    # rescue handler is removed (or the nil-params guard is dropped), this
+    # NoMethodErrors out of the server.
+    server = TestServer.new
+    response = server.send(:handle_jsonrpc_request,
+      "jsonrpc" => "2.0", "method" => "tools/call", "id" => 1)
+
+    assert_equal "2.0", response[:jsonrpc]
+    assert_equal 1, response[:id]
+    assert_equal(-32603, response[:error][:code])
+    assert_equal false, response[:error][:data][:success]
+    refute_nil response[:error][:message], "structured error must carry a message"
+  end
+
+  def test_tools_call_with_non_hash_params_returns_jsonrpc_error
+    server = TestServer.new
+    response = server.send(:handle_jsonrpc_request,
+      "jsonrpc" => "2.0", "method" => "tools/call",
+      "params" => "not a hash", "id" => 2)
+
+    assert_equal(-32603, response[:error][:code])
+    assert_equal 2, response[:id]
+  end
 end
