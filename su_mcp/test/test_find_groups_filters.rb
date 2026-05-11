@@ -48,6 +48,19 @@ class TestFindGroupsFilters < Minitest::Test
                  @server.send(:entity_matches_kind?, Object.new, true)
   end
 
+  def test_kind_accepts_groups_when_components_flag_on
+    # Groups should match regardless of the include_components flag — turning
+    # the flag on never narrows the Group result set.
+    assert_equal true,
+                 @server.send(:entity_matches_kind?, FakeFGGroup.new, true)
+  end
+
+  def test_kind_rejects_arbitrary_entities_when_flag_off
+    # Round out the matrix: non-Group, non-Component, flag off → false.
+    assert_equal false,
+                 @server.send(:entity_matches_kind?, Object.new, false)
+  end
+
   # -- name_matches? --------------------------------------------------------
 
   def test_name_no_filter_always_matches
