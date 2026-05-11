@@ -113,6 +113,7 @@ class TestResolveEntity < Minitest::Test
     model = FakeModel.new([])
     err = assert_raises(RuntimeError) { @server.send(:resolve_entity,{}, model) }
     assert_match(/exactly one/, err.message)
+    refute_match(/not both/, err.message)
   end
 
   def test_blank_string_treated_as_missing
