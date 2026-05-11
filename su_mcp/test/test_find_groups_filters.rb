@@ -146,6 +146,40 @@ class TestFindGroupsFilters < Minitest::Test
     assert_equal true, @server.send(:bounds_matches?, eb, query)
   end
 
+  def test_bounds_touch_on_y_face_counts_as_match
+    # Same touching-counts contract, exercised on the y axis. If '<' on
+    # emax.y were flipped to '<=', this would no longer match.
+    eb = make_bounds([0, 10, 0], [10, 20, 10])
+    query = { "min" => [0, 0, 0], "max" => [10, 10, 10] }
+    assert_equal true, @server.send(:bounds_matches?, eb, query)
+  end
+
+  def test_bounds_touch_on_z_face_counts_as_match
+    eb = make_bounds([0, 0, 10], [10, 10, 20])
+    query = { "min" => [0, 0, 0], "max" => [10, 10, 10] }
+    assert_equal true, @server.send(:bounds_matches?, eb, query)
+  end
+
+  def test_bounds_low_side_disjoint_on_x_misses
+    # Pin the 'emax.x < qmin[0]' disjunct (entity sits below the query box
+    # on x). Without this case, that disjunct could be deleted unnoticed.
+    eb = make_bounds([-30, 0, 0], [-20, 10, 10])
+    query = { "min" => [0, 0, 0], "max" => [10, 10, 10] }
+    assert_equal false, @server.send(:bounds_matches?, eb, query)
+  end
+
+  def test_bounds_low_side_disjoint_on_y_misses
+    eb = make_bounds([0, -30, 0], [10, -20, 10])
+    query = { "min" => [0, 0, 0], "max" => [10, 10, 10] }
+    assert_equal false, @server.send(:bounds_matches?, eb, query)
+  end
+
+  def test_bounds_low_side_disjoint_on_z_misses
+    eb = make_bounds([0, 0, -30], [10, 10, -20])
+    query = { "min" => [0, 0, 0], "max" => [10, 10, 10] }
+    assert_equal false, @server.send(:bounds_matches?, eb, query)
+  end
+
   def test_bounds_negative_coordinates_work
     eb = make_bounds([-5, -5, -5], [-1, -1, -1])
     query = { "min" => [-10, -10, -10], "max" => [0, 0, 0] }
