@@ -104,10 +104,44 @@ class TestJsonrpcRouting < Minitest::Test
     assert_equal "create_component",  converted["params"]["name"]
     assert_equal({ "type" => "cube" }, converted["params"]["arguments"])
     assert_equal 42, converted["id"]
+    # The converted request must carry the incoming jsonrpc field; otherwise
+    # downstream handlers default to "2.0" and a mismatch is invisible.
+    assert_equal "2.0", converted["jsonrpc"]
 
     # Production must return handle_tool_call's response, not nil; otherwise
     # real clients receive a broken response even though the spy was called.
     assert_equal({ jsonrpc: "2.0", result: { success: true }, id: 42 }, response)
+  end
+
+  # -- jsonrpc field is echoed (not hard-coded "2.0") per routing branch ----
+
+  def test_prompts_list_echoes_non_default_jsonrpc
+    server = TestServer.new
+    response = server.send(:handle_jsonrpc_request,
+      "jsonrpc" => "2.1", "method" => "prompts/list", "id" => 1)
+    assert_equal "2.1", response[:jsonrpc]
+  end
+
+  def test_resources_list_echoes_non_default_jsonrpc
+    server = TestServer.new
+    response = server.send(:handle_jsonrpc_request,
+      "jsonrpc" => "2.1", "method" => "resources/list", "id" => 2)
+    assert_equal "2.1", response[:jsonrpc]
+  end
+
+  def test_method_not_found_echoes_non_default_jsonrpc
+    server = TestServer.new
+    response = server.send(:handle_jsonrpc_request,
+      "jsonrpc" => "2.1", "method" => "nope/whatever", "id" => 3)
+    assert_equal "2.1", response[:jsonrpc]
+  end
+
+  def test_legacy_command_propagates_non_default_jsonrpc
+    server = SpyServer.new
+    server.send(:handle_jsonrpc_request,
+      "command" => "get_selection", "jsonrpc" => "2.1", "id" => 4)
+    converted = server.tool_calls.first
+    assert_equal "2.1", converted["jsonrpc"]
   end
 
   def test_legacy_command_with_no_parameters_passes_nil_arguments
