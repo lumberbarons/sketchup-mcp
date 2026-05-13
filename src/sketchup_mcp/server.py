@@ -275,6 +275,12 @@ def batch_create(
     Deletes (return `{id}`):
       - `{"op": "delete", "id_or_name"}`
 
+    Replaces (return `{id, name, bounds}`):
+      - `{"op": "replace", "id_or_name", "geometry": {...}, "recursive"?: bool}` —
+        swaps the target's geometry in place; name, material, layer
+        preserved. `geometry` matches the create-op shapes above. See
+        replace_geometry for the recursive flag and entity-id semantics.
+
     `id_or_name` is an integer entityID or a string group name. A name that
     matches multiple groups errors — no ambiguous targets.
 
@@ -361,6 +367,50 @@ def create_extrusion(
     if material is not None:
         arguments["material"] = material
     return _call_sketchup(ctx, "create_extrusion", arguments)
+
+
+@mcp.tool()
+def replace_geometry(
+    ctx: Context,
+    geometry: dict[str, Any],
+    id: str | None = None,
+    name: str | None = None,
+    recursive: bool = True,
+) -> str:
+    """Replace a Group's geometry in place, preserving name, material, and layer.
+
+    Provide exactly one of `id` (entity ID) or `name` (exact match against a
+    top-level Group's name). The resulting Group keeps the target's name,
+    material, and layer; its bounds change to match the new geometry.
+
+    Note: the entity ID changes (the old group is erased and a new one is
+    created). Cache the returned `id` if you plan to address by ID rather
+    than name.
+
+    `geometry` is a dict picking the new shape:
+
+      - `{"op": "cube",      "position": [x,y,z], "dimensions": [dx,dy,dz]}`
+      - `{"op": "cylinder",  "position", "radius", "height"}`
+      - `{"op": "sphere",    "position", "radius"}`
+      - `{"op": "cone",      "position", "radius", "height"}`
+      - `{"op": "extrusion", "profile", ... (see create_extrusion)}`
+
+    A `material` key inside `geometry` is honored only if the target has no
+    material to inherit (rare) — the target's own material always wins.
+
+    By default (`recursive: true`) the call errors if the target Group
+    contains nested sub-Groups or ComponentInstances, since those would be
+    lost when the group is replaced. Pass `recursive: false` to acknowledge
+    children-loss and proceed.
+
+    Returns `{id, name, bounds: {min, max}, success}`.
+    """
+    arguments: dict[str, Any] = {"geometry": geometry, "recursive": recursive}
+    if id is not None:
+        arguments["id"] = id
+    if name is not None:
+        arguments["name"] = name
+    return _call_sketchup(ctx, "replace_geometry", arguments)
 
 
 @mcp.tool()

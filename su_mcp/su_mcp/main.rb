@@ -234,6 +234,8 @@ module SU_MCP
           find_groups(args)
         when "inspect_geometry"
           inspect_geometry(args)
+        when "replace_geometry"
+          replace_geometry(args)
         when "get_selection"
           get_selection
         when "export", "export_scene"
@@ -764,7 +766,7 @@ module SU_MCP
       set_material({ "id" => group.entityID, "material" => material_name })
     end
 
-    KNOWN_BATCH_OPS = %w[cube cylinder sphere cone extrusion translate move_to delete].freeze
+    KNOWN_BATCH_OPS = %w[cube cylinder sphere cone extrusion translate move_to delete replace].freeze
 
     # Run many create / mutate / delete ops as a single SketchUp transaction.
     # The whole batch is one undo step. Any exception during dispatch aborts
@@ -828,6 +830,10 @@ module SU_MCP
         id = entity.entityID
         entity.erase!
         { id: id, success: true }
+      when "replace"
+        replace_params = id_or_name_params(op["id_or_name"]).merge("geometry" => op["geometry"])
+        replace_params["recursive"] = op["recursive"] if op.key?("recursive")
+        replace_geometry(replace_params)
       else
         # validate_batch_op already screened this; defensive only.
         raise "Unknown batch op: #{op["op"].inspect}"
@@ -1088,6 +1094,88 @@ module SU_MCP
         is_solid: edges_form_solid?(edges),
         faces: face_dicts
       }
+    end
+
+    KNOWN_REPLACE_GEOMETRY_OPS = %w[cube cylinder sphere cone extrusion].freeze
+
+    def replace_geometry(params)
+      log "replace_geometry params: #{params.inspect}"
+      target = resolve_entity(params)
+      unless target.is_a?(Sketchup::Group)
+        raise "replace_geometry only supports top-level Group entities (got #{target.class})"
+      end
+
+      geometry = params["geometry"]
+      validate_replace_geometry_dict(geometry)
+
+      # `recursive` (default true) means "preserve recursion" — if any
+      # nested groups/components exist they'd be lost in a recreate, so we
+      # refuse. Pass recursive: false to acknowledge children-loss and proceed.
+      recursive = params.key?("recursive") ? !!params["recursive"] : true
+      children = child_entities(target)
+      if children.any? && recursive
+        n = children.length
+        raise "target group has #{n} sub-entit#{n == 1 ? 'y' : 'ies'}; pass recursive: false to replace anyway (children will be lost)"
+      end
+
+      captured_name = target.name
+      captured_material = target.material
+      captured_layer = target.respond_to?(:layer) ? target.layer : nil
+
+      target.erase!
+
+      new_group = build_replacement_group(geometry, captured_name)
+
+      # Re-apply captured attrs. Material set via assignment works on Groups;
+      # apply_material would re-pick a color, which we don't want — preserve
+      # exactly what was there.
+      new_group.material = captured_material if captured_material
+      if captured_layer && captured_layer.respond_to?(:valid?) && captured_layer.valid?
+        new_group.layer = captured_layer
+      end
+      new_group.name = captured_name if new_group.name != captured_name
+
+      out = bounds_result(new_group)
+      out[:name] = new_group.name
+      out
+    end
+
+    # Pure: validate the geometry dict accepted by replace_geometry and the
+    # "replace" batch op. Centralizes both shape and op-name checks so the
+    # error message points at the actual problem.
+    def validate_replace_geometry_dict(geometry)
+      raise "'geometry' is required" if geometry.nil?
+      raise "'geometry' must be a Hash" unless geometry.is_a?(Hash)
+      op = geometry["op"].to_s
+      unless KNOWN_REPLACE_GEOMETRY_OPS.include?(op)
+        raise "geometry 'op' must be one of: #{KNOWN_REPLACE_GEOMETRY_OPS.join(', ')} (got #{geometry["op"].inspect})"
+      end
+    end
+
+    # Adapter: nested Groups + ComponentInstances inside a target. Pulled
+    # out so replace_geometry's main flow stays readable.
+    def child_entities(group)
+      group.entities.grep(Sketchup::Group) + group.entities.grep(Sketchup::ComponentInstance)
+    end
+
+    # Adapter: dispatch a geometry dict to the right create_* path and
+    # return the newly created Group. The caller provides the preserved
+    # name so we can stamp it on creates that take a name directly
+    # (extrusion) without an extra .name= pass.
+    def build_replacement_group(geometry, preserved_name)
+      op = geometry["op"].to_s
+      model = Sketchup.active_model
+      if op == "extrusion"
+        extrusion_params = geometry.dup
+        extrusion_params["name"] = preserved_name
+        result = create_extrusion(extrusion_params)
+      else
+        primitive_op = geometry.dup
+        primitive_op["op"] = op
+        primitive_op["name"] = preserved_name
+        result = create_named_primitive(primitive_op)
+      end
+      model.find_entity_by_id(result[:id])
     end
 
     # Pure: a group is solid iff every edge bounds exactly 2 faces. Operates

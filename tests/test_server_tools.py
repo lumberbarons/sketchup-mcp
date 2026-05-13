@@ -98,6 +98,7 @@ async def test_every_tool_is_registered(fake: FakeSketchupClient) -> None:
         "transform_component",
         "find_groups",
         "inspect_geometry",
+        "replace_geometry",
         "get_selection",
         "set_material",
         "export_scene",
@@ -736,6 +737,88 @@ async def test_create_extrusion_omits_axis_keys_when_unset(
         )
     for key in ("extrude_axis", "extrude_from", "extrude_to"):
         assert key not in fake.last_arguments
+
+
+async def test_replace_geometry_forwards_id_and_geometry(
+    fake: FakeSketchupClient,
+) -> None:
+    geometry = {"op": "cube", "position": [0, 0, 0], "dimensions": [16, 16, 8]}
+    async with make_session() as session:
+        await session.call_tool("replace_geometry", {"id": "123", "geometry": geometry})
+    assert fake.last_tool_name == "replace_geometry"
+    assert fake.last_arguments == {
+        "id": "123",
+        "geometry": geometry,
+        "recursive": True,
+    }
+    assert "name" not in fake.last_arguments
+
+
+async def test_replace_geometry_forwards_name(fake: FakeSketchupClient) -> None:
+    geometry = {"op": "cylinder", "position": [0, 0, 0], "radius": 1.5, "height": 96}
+    async with make_session() as session:
+        await session.call_tool("replace_geometry", {"name": "Post 1", "geometry": geometry})
+    assert fake.last_arguments == {
+        "name": "Post 1",
+        "geometry": geometry,
+        "recursive": True,
+    }
+    assert "id" not in fake.last_arguments
+
+
+async def test_replace_geometry_forwards_recursive_false(
+    fake: FakeSketchupClient,
+) -> None:
+    """`recursive: false` is the opt-out for the children-loss guard.
+    It must reach the Ruby side as a literal false, not be coerced or dropped."""
+    geometry = {"op": "cube", "position": [0, 0, 0], "dimensions": [1, 1, 1]}
+    async with make_session() as session:
+        await session.call_tool(
+            "replace_geometry",
+            {"id": "5", "geometry": geometry, "recursive": False},
+        )
+    assert fake.last_arguments["recursive"] is False
+
+
+async def test_replace_geometry_forwards_extrusion_geometry(
+    fake: FakeSketchupClient,
+) -> None:
+    """Extrusion geometry includes nested arrays + floats; pin the wire
+    shape so a future flatten/coerce can't break the round trip."""
+    geometry = {
+        "op": "extrusion",
+        "profile": [[0, 0], [38, 0], [38, 96], [0, 96]],
+        "extrude_axis": "y",
+        "extrude_from": 0,
+        "extrude_to": 0.5,
+        "holes": [[[8.25, 36], [33.25, 36], [33.25, 61], [8.25, 61]]],
+    }
+    async with make_session() as session:
+        await session.call_tool("replace_geometry", {"name": "Siding W1", "geometry": geometry})
+    assert fake.last_arguments["geometry"] == geometry
+
+
+async def test_batch_create_forwards_replace_op(fake: FakeSketchupClient) -> None:
+    """The new `replace` batch op must round-trip with `id_or_name`,
+    `geometry`, and optional `recursive` intact — the headline win is
+    transactional multi-group geometry edits."""
+    ops = [
+        {
+            "op": "replace",
+            "id_or_name": "Siding W1",
+            "geometry": {
+                "op": "extrusion",
+                "profile": [[0, 0], [38, 0], [38, 96], [0, 96]],
+                "extrude_axis": "y",
+                "extrude_from": 0,
+                "extrude_to": 0.5,
+            },
+            "recursive": False,
+        },
+    ]
+    async with make_session() as session:
+        await session.call_tool("batch_create", {"operations": ops})
+    assert fake.last_arguments["operations"] == ops
 
 
 async def test_inspect_geometry_forwards_id(fake: FakeSketchupClient) -> None:

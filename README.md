@@ -102,6 +102,7 @@ Once connected, Claude can interact with Sketchup using the following capabiliti
 * `transform_component` - Move, rotate, or scale a component, addressed by entity ID or top-level group name
 * `find_groups` - Query the model for groups by name prefix, regex, bounds intersection, or parent
 * `inspect_geometry` - Return per-face normals, areas, and loops (outer + holes) for a group
+* `replace_geometry` - Swap a group's geometry in place; preserves name, material, and layer
 * `get_selection` - Get information about currently selected components
 * `set_material` - Apply a material or color to a component
 * `export_scene` - Export the current scene (default format: `skp`)
