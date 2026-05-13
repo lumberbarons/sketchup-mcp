@@ -232,6 +232,8 @@ module SU_MCP
           transform_component(args)
         when "find_groups"
           find_groups(args)
+        when "inspect_geometry"
+          inspect_geometry(args)
         when "get_selection"
           get_selection
         when "export", "export_scene"
@@ -1061,6 +1063,68 @@ module SU_MCP
       return false if emax.y < qmin[1] || emin.y > qmax[1]
       return false if emax.z < qmin[2] || emin.z > qmax[2]
       true
+    end
+
+    def inspect_geometry(params)
+      log "inspect_geometry params: #{params.inspect}"
+      entity = resolve_entity(params)
+      unless entity.is_a?(Sketchup::Group)
+        raise "inspect_geometry only supports top-level Group entities (got #{entity.class})"
+      end
+
+      include_vertices = params.key?("include_vertices") ? !!params["include_vertices"] : true
+
+      faces = entity.entities.grep(Sketchup::Face)
+      edges = entity.entities.grep(Sketchup::Edge)
+
+      face_dicts = faces.map { |f| describe_face(f, include_vertices) }
+
+      {
+        success: true,
+        id: entity.entityID,
+        name: entity.name,
+        face_count: faces.length,
+        edge_count: edges.length,
+        is_solid: edges_form_solid?(edges),
+        faces: face_dicts
+      }
+    end
+
+    # Pure: a group is solid iff every edge bounds exactly 2 faces. Operates
+    # on a counts array so tests can drive it without real edges.
+    def is_solid_from_edge_face_counts?(counts)
+      return false if counts.empty?
+      counts.all? { |c| c == 2 }
+    end
+
+    # Adapter: count faces per edge and run the pure check.
+    def edges_form_solid?(edges)
+      is_solid_from_edge_face_counts?(edges.map { |e| e.faces.length })
+    end
+
+    # Pure: round each coord of a 3-element vector to `decimals`. Used for
+    # both normals (6 decimals) and vertex coords (6 decimals).
+    def round_xyz(xyz, decimals)
+      [xyz[0].to_f.round(decimals), xyz[1].to_f.round(decimals), xyz[2].to_f.round(decimals)]
+    end
+
+    def describe_face(face, include_vertices)
+      n = face.normal
+      outer_loop_id = face.outer_loop.entityID
+      loops = face.loops.map do |loop|
+        role = loop.entityID == outer_loop_id ? "outer" : "hole"
+        verts = loop.vertices.map { |v| v.position }
+        loop_dict = { role: role, vertex_count: verts.length }
+        if include_vertices
+          loop_dict[:vertices] = verts.map { |p| round_xyz([p.x.to_f, p.y.to_f, p.z.to_f], 6) }
+        end
+        loop_dict
+      end
+      {
+        normal: round_xyz([n.x.to_f, n.y.to_f, n.z.to_f], 6),
+        area: face.area.to_f.round(2),
+        loops: loops
+      }
     end
 
     def describe_match(entity)

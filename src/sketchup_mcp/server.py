@@ -364,6 +364,61 @@ def create_extrusion(
 
 
 @mcp.tool()
+def inspect_geometry(
+    ctx: Context,
+    id: str | None = None,
+    name: str | None = None,
+    include_vertices: bool = True,
+) -> str:
+    """Return detailed geometry for a top-level Group.
+
+    Provide exactly one of `id` (entity ID) or `name` (exact match against a
+    top-level Group's name). Name lookup errors if zero or multiple groups
+    match.
+
+    Inspection is non-recursive: only faces in the target group's own
+    entities are returned, not faces inside nested sub-groups.
+
+    Response:
+    ```
+    {
+      "id": 12345,
+      "name": "WA Siding 1",
+      "face_count": 10,
+      "edge_count": 24,
+      "is_solid": true,
+      "faces": [
+        {
+          "normal": [0.0, -1.0, 0.0],
+          "area": 3023.0,
+          "loops": [
+            {"role": "outer", "vertex_count": 4,
+             "vertices": [[0,0,-0.375], [38,0,-0.375], [38,0,95.625], [0,0,95.625]]},
+            {"role": "hole",  "vertex_count": 4,
+             "vertices": [[8.25,0,36], [33.25,0,36], [33.25,0,61], [8.25,0,61]]}
+          ]
+        }, ...
+      ]
+    }
+    ```
+
+    Coordinates are in inches. Normals are rounded to 6 decimals, areas
+    (square inches) to 2 decimals. `is_solid` is true iff every edge in the
+    group bounds exactly 2 faces.
+
+    include_vertices: when False, the `vertices` arrays are omitted from
+        each loop — useful for cheap face/normal/loop-count summaries on
+        large models. Loop counts and roles are still returned.
+    """
+    arguments: dict[str, Any] = {"include_vertices": include_vertices}
+    if id is not None:
+        arguments["id"] = id
+    if name is not None:
+        arguments["name"] = name
+    return _call_sketchup(ctx, "inspect_geometry", arguments)
+
+
+@mcp.tool()
 def find_groups(
     ctx: Context,
     name_prefix: str | None = None,

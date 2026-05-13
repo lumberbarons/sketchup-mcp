@@ -97,6 +97,7 @@ async def test_every_tool_is_registered(fake: FakeSketchupClient) -> None:
         "delete_component",
         "transform_component",
         "find_groups",
+        "inspect_geometry",
         "get_selection",
         "set_material",
         "export_scene",
@@ -735,6 +736,39 @@ async def test_create_extrusion_omits_axis_keys_when_unset(
         )
     for key in ("extrude_axis", "extrude_from", "extrude_to"):
         assert key not in fake.last_arguments
+
+
+async def test_inspect_geometry_forwards_id(fake: FakeSketchupClient) -> None:
+    async with make_session() as session:
+        await session.call_tool("inspect_geometry", {"id": "123"})
+    assert fake.last_tool_name == "inspect_geometry"
+    assert fake.last_arguments == {"id": "123", "include_vertices": True}
+    assert "name" not in fake.last_arguments
+
+
+async def test_inspect_geometry_forwards_name(fake: FakeSketchupClient) -> None:
+    async with make_session() as session:
+        await session.call_tool("inspect_geometry", {"name": "WA Siding 1"})
+    assert fake.last_arguments == {"name": "WA Siding 1", "include_vertices": True}
+    assert "id" not in fake.last_arguments
+
+
+async def test_inspect_geometry_forwards_include_vertices_false(
+    fake: FakeSketchupClient,
+) -> None:
+    """`include_vertices=False` is the cheap-summary mode; it must reach
+    the Ruby side as a literal false, not get coerced or dropped."""
+    async with make_session() as session:
+        await session.call_tool("inspect_geometry", {"id": "123", "include_vertices": False})
+    assert fake.last_arguments == {"id": "123", "include_vertices": False}
+
+
+async def test_inspect_geometry_omits_unset_id_and_name(fake: FakeSketchupClient) -> None:
+    """When neither id nor name is given the Ruby side must see neither —
+    `resolve_entity` raises the both/neither validation error on that case."""
+    async with make_session() as session:
+        await session.call_tool("inspect_geometry", {})
+    assert fake.last_arguments == {"include_vertices": True}
 
 
 async def test_create_extrusion_negative_extrude_depth_round_trips(
