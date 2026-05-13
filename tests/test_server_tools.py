@@ -656,6 +656,105 @@ async def test_create_extrusion_omits_unset_material(
     assert "material" not in fake.last_arguments
 
 
+async def test_create_extrusion_forwards_holes(fake: FakeSketchupClient) -> None:
+    """`holes` (list of inner 2D polygons) must round-trip unchanged so the
+    Ruby side can turn them into through-cutouts. Validation lives in Ruby."""
+    holes = [
+        [[8.25, 36], [33.25, 36], [33.25, 61], [8.25, 61]],
+        [[40, 40], [44, 40], [44, 44], [40, 44]],
+    ]
+    async with make_session() as session:
+        await session.call_tool(
+            "create_extrusion",
+            {
+                "name": "Siding 1",
+                "profile": [[0, 0], [38, 0], [38, 96], [0, 96]],
+                "extrude_axis": "y",
+                "extrude_from": 0,
+                "extrude_to": 0.5,
+                "holes": holes,
+            },
+        )
+    assert fake.last_arguments["holes"] == holes
+
+
+async def test_create_extrusion_omits_unset_holes(fake: FakeSketchupClient) -> None:
+    async with make_session() as session:
+        await session.call_tool(
+            "create_extrusion",
+            {
+                "name": "Siding 1",
+                "profile": [[0, 0], [38, 0], [38, 96], [0, 96]],
+                "extrude_axis": "y",
+                "extrude_from": 0,
+                "extrude_to": 0.5,
+            },
+        )
+    assert "holes" not in fake.last_arguments
+
+
+async def test_create_extrusion_forwards_plane_and_depth(
+    fake: FakeSketchupClient,
+) -> None:
+    """Arbitrary-plane mode: `plane` (origin + normal) plus `extrude_depth`.
+    Wire-shape only — Ruby owns basis construction and pushpull direction."""
+    async with make_session() as session:
+        await session.call_tool(
+            "create_extrusion",
+            {
+                "name": "Roof Sheathing 1",
+                "profile": [[0, 0], [48, 0], [48, 96], [0, 96]],
+                "plane": {"origin": [0, 0, 0], "normal": [0, -0.4472, 0.8944]},
+                "extrude_depth": 0.625,
+            },
+        )
+    assert fake.last_arguments == {
+        "name": "Roof Sheathing 1",
+        "profile": [[0, 0], [48, 0], [48, 96], [0, 96]],
+        "plane": {"origin": [0, 0, 0], "normal": [0, -0.4472, 0.8944]},
+        "extrude_depth": 0.625,
+    }
+    assert "extrude_axis" not in fake.last_arguments
+
+
+async def test_create_extrusion_omits_axis_keys_when_unset(
+    fake: FakeSketchupClient,
+) -> None:
+    """The Ruby side branches on key presence to pick axis-vs-plane mode.
+    A bare plane-mode call must not leak `extrude_axis` / `extrude_from` /
+    `extrude_to` onto the wire."""
+    async with make_session() as session:
+        await session.call_tool(
+            "create_extrusion",
+            {
+                "name": "Slab",
+                "profile": [[0, 0], [1, 0], [1, 1], [0, 1]],
+                "plane": {"origin": [0, 0, 0], "normal": [0, 0, 1]},
+                "extrude_depth": 1.0,
+            },
+        )
+    for key in ("extrude_axis", "extrude_from", "extrude_to"):
+        assert key not in fake.last_arguments
+
+
+async def test_create_extrusion_negative_extrude_depth_round_trips(
+    fake: FakeSketchupClient,
+) -> None:
+    """Sign of `extrude_depth` controls direction; the Python wrapper must
+    not drop, abs, or clamp a negative depth."""
+    async with make_session() as session:
+        await session.call_tool(
+            "create_extrusion",
+            {
+                "name": "Slab Down",
+                "profile": [[0, 0], [1, 0], [1, 1], [0, 1]],
+                "plane": {"origin": [0, 0, 0], "normal": [0, 0, 1]},
+                "extrude_depth": -2.5,
+            },
+        )
+    assert fake.last_arguments["extrude_depth"] == -2.5
+
+
 # ---------------------------------------------------------------------------
 # batch_create — wire-shape tests. Per-op dispatch and the start/commit/abort
 # transaction logic live in Ruby (see su_mcp/test/test_batch_create.rb).

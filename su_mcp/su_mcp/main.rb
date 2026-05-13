@@ -517,26 +517,76 @@ module SU_MCP
 
       name = params["name"].to_s
       profile = params["profile"]
-      axis = params["extrude_axis"].to_s
+      axis = params["extrude_axis"]
       from = params["extrude_from"]
       to = params["extrude_to"]
+      plane = params["plane"]
+      extrude_depth = params["extrude_depth"]
+      holes = params["holes"]
 
       raise "'name' is required" if name.empty?
       unless profile.is_a?(Array) && profile.length >= 3
         raise "'profile' must be an array of at least 3 [a, b] vertices"
       end
-      unless %w[x y z].include?(axis)
-        raise "'extrude_axis' must be one of 'x', 'y', 'z' (got #{params["extrude_axis"].inspect})"
-      end
-      unless from.is_a?(Numeric) && to.is_a?(Numeric)
-        raise "'extrude_from' and 'extrude_to' must be numbers"
-      end
-      raise "'extrude_from' and 'extrude_to' must differ" if from == to
 
-      point_tuples = build_profile_points(profile, axis, from.to_f)
-      points = point_tuples.map { |x, y, z| Geom::Point3d.new(x, y, z) }
-      dx, dy, dz = extrude_direction(axis, from.to_f, to.to_f)
-      desired = Geom::Vector3d.new(dx, dy, dz)
+      axis_mode = !axis.nil?
+      plane_mode = !plane.nil?
+      if axis_mode && plane_mode
+        raise "Provide either 'extrude_axis' or 'plane', not both"
+      end
+      unless axis_mode || plane_mode
+        raise "Provide one of 'extrude_axis' or 'plane'"
+      end
+
+      if holes
+        raise "'holes' must be an array of polygons" unless holes.is_a?(Array)
+        holes.each_with_index do |h, i|
+          unless h.is_a?(Array) && h.length >= 3
+            raise "hole ##{i + 1} must be an array of at least 3 [a, b] vertices"
+          end
+        end
+        validate_holes(profile, holes)
+      end
+
+      if axis_mode
+        axis_s = axis.to_s
+        unless %w[x y z].include?(axis_s)
+          raise "'extrude_axis' must be one of 'x', 'y', 'z' (got #{axis.inspect})"
+        end
+        unless from.is_a?(Numeric) && to.is_a?(Numeric)
+          raise "'extrude_from' and 'extrude_to' must be numbers"
+        end
+        raise "'extrude_from' and 'extrude_to' must differ" if from == to
+
+        outer_tuples = build_profile_points(profile, axis_s, from.to_f)
+        hole_tuples = (holes || []).map { |h| build_profile_points(h, axis_s, from.to_f) }
+        dx, dy, dz = extrude_direction(axis_s, from.to_f, to.to_f)
+        desired = Geom::Vector3d.new(dx, dy, dz)
+        depth = (to - from).abs.to_f
+      else
+        origin = plane["origin"]
+        normal = plane["normal"]
+        unless origin.is_a?(Array) && origin.length == 3
+          raise "'plane.origin' must be a 3-element array"
+        end
+        unless normal.is_a?(Array) && normal.length == 3
+          raise "'plane.normal' must be a 3-element array"
+        end
+        unless extrude_depth.is_a?(Numeric)
+          raise "'extrude_depth' (number) is required when 'plane' is provided"
+        end
+        raise "'extrude_depth' must not be zero" if extrude_depth.zero?
+
+        u, v, n = build_plane_basis(normal)
+        outer_tuples = plane_profile_to_3d(profile, origin, u, v)
+        hole_tuples = (holes || []).map { |h| plane_profile_to_3d(h, origin, u, v) }
+        sign = extrude_depth.to_f > 0 ? 1.0 : -1.0
+        desired = Geom::Vector3d.new(n[0] * sign, n[1] * sign, n[2] * sign)
+        depth = extrude_depth.abs.to_f
+      end
+
+      points = outer_tuples.map { |x, y, z| Geom::Point3d.new(x, y, z) }
+      hole_pts_3d_lists = hole_tuples.map { |h| h.map { |x, y, z| Geom::Point3d.new(x, y, z) } }
 
       model = Sketchup.active_model
       group = model.active_entities.add_group
@@ -548,7 +598,20 @@ module SU_MCP
       # normal disagrees with the direction the caller asked for. This is
       # what makes vertex-winding irrelevant from the caller's point of view.
       face.reverse! if face.normal.dot(desired) < 0
-      face.pushpull((to - from).abs)
+
+      # Cut each hole by adding its face inside the outer, then erasing the
+      # face — leaves the inner-loop edges, turning the outer face into a
+      # face-with-hole that pushpull carries through as a void.
+      hole_pts_3d_lists.each do |hole_pts|
+        hole_face = group.entities.add_face(hole_pts)
+        hole_face.erase! if hole_face
+      end
+
+      # `face` may have been invalidated by the hole-cutting splits; refind
+      # the outer (largest-area) face and re-check its normal direction.
+      target = face.valid? ? face : group.entities.grep(Sketchup::Face).max_by(&:area)
+      target.reverse! if target.normal.dot(desired) < 0
+      target.pushpull(depth)
 
       apply_material(group, params["material"]) if params["material"]
 
@@ -579,6 +642,116 @@ module SU_MCP
       when "x" then [sign, 0.0, 0.0]
       when "y" then [0.0, sign, 0.0]
       when "z" then [0.0, 0.0, sign]
+      end
+    end
+
+    # Pure: orthonormal basis [u, v, n] for a plane with the given normal.
+    # The 2D profile coordinate (a, b) maps to a*u + b*v on the plane. The
+    # reference axis used to seed u is the world axis *least* aligned with
+    # the normal — gives the most numerically stable cross product. Each
+    # returned vector is a [x, y, z] tuple.
+    def build_plane_basis(normal)
+      nx = normal[0].to_f
+      ny = normal[1].to_f
+      nz = normal[2].to_f
+      mag = Math.sqrt(nx * nx + ny * ny + nz * nz)
+      raise "'plane.normal' must be a non-zero vector" if mag.zero?
+      nx /= mag
+      ny /= mag
+      nz /= mag
+
+      ax = nx.abs
+      ay = ny.abs
+      az = nz.abs
+      ref = if az <= ax && az <= ay
+        [0.0, 0.0, 1.0]
+      elsif ax <= ay
+        [1.0, 0.0, 0.0]
+      else
+        [0.0, 1.0, 0.0]
+      end
+
+      ux = ref[1] * nz - ref[2] * ny
+      uy = ref[2] * nx - ref[0] * nz
+      uz = ref[0] * ny - ref[1] * nx
+      umag = Math.sqrt(ux * ux + uy * uy + uz * uz)
+      ux /= umag
+      uy /= umag
+      uz /= umag
+
+      vx = ny * uz - nz * uy
+      vy = nz * ux - nx * uz
+      vz = nx * uy - ny * ux
+
+      [[ux, uy, uz], [vx, vy, vz], [nx, ny, nz]]
+    end
+
+    # Pure: map a 2D profile onto a plane given origin and (u, v) basis vectors.
+    # Each output is an [x, y, z] tuple = origin + a*u + b*v.
+    def plane_profile_to_3d(profile, origin, u, v)
+      ox = origin[0].to_f
+      oy = origin[1].to_f
+      oz = origin[2].to_f
+      profile.map do |pair|
+        a = pair[0].to_f
+        b = pair[1].to_f
+        [ox + a * u[0] + b * v[0], oy + a * u[1] + b * v[1], oz + a * u[2] + b * v[2]]
+      end
+    end
+
+    # Pure: 2D AABB of a polygon as [xmin, ymin, xmax, ymax].
+    def polygon_aabb_2d(polygon)
+      xs = polygon.map { |p| p[0].to_f }
+      ys = polygon.map { |p| p[1].to_f }
+      [xs.min, ys.min, xs.max, ys.max]
+    end
+
+    # Pure: AABB overlap (touching counts).
+    def aabbs_overlap_2d?(a, b)
+      !(a[2] < b[0] || a[0] > b[2] || a[3] < b[1] || a[1] > b[3])
+    end
+
+    # Pure: ray-cast point-in-polygon for 2D points. Returns true if `pt` lies
+    # inside `polygon`. Points exactly on the boundary may go either way —
+    # don't rely on this for boundary classification.
+    def point_in_polygon_2d?(pt, polygon)
+      x = pt[0].to_f
+      y = pt[1].to_f
+      inside = false
+      n = polygon.length
+      j = n - 1
+      (0...n).each do |i|
+        xi = polygon[i][0].to_f
+        yi = polygon[i][1].to_f
+        xj = polygon[j][0].to_f
+        yj = polygon[j][1].to_f
+        if ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)
+          inside = !inside
+        end
+        j = i
+      end
+      inside
+    end
+
+    # Pure: validate `holes` against an `outer` polygon. Two checks:
+    #   1. Every hole vertex lies inside the outer profile.
+    #   2. No two holes have overlapping AABBs (catches simple intersect cases).
+    # Raises with a clear, 1-indexed identifier on the first failure.
+    def validate_holes(outer, holes)
+      holes.each_with_index do |hole, i|
+        hole.each do |pt|
+          unless point_in_polygon_2d?(pt, outer)
+            raise "hole ##{i + 1} has vertex #{pt.inspect} outside the outer profile"
+          end
+        end
+      end
+      hole_aabbs = holes.map { |h| polygon_aabb_2d(h) }
+      (0...holes.length).each do |i|
+        ((i + 1)...holes.length).each do |j|
+          if aabbs_overlap_2d?(hole_aabbs[i], hole_aabbs[j])
+            raise "holes ##{i + 1} and ##{j + 1} overlap"
+          end
+        end
       end
     end
 
@@ -637,14 +810,12 @@ module SU_MCP
       when "cube", "cylinder", "sphere", "cone"
         create_named_primitive(op)
       when "extrusion"
-        extrusion_params = {
-          "name" => op["name"],
-          "profile" => op["profile"],
-          "extrude_axis" => op["extrude_axis"],
-          "extrude_from" => op["extrude_from"],
-          "extrude_to" => op["extrude_to"]
-        }
-        extrusion_params["material"] = op["material"] if op["material"]
+        extrusion_params = { "name" => op["name"], "profile" => op["profile"] }
+        # Only forward keys the caller actually set so create_extrusion's
+        # axis-vs-plane mutual-exclusion check sees the right shape.
+        %w[extrude_axis extrude_from extrude_to holes plane extrude_depth material].each do |k|
+          extrusion_params[k] = op[k] unless op[k].nil?
+        end
         create_extrusion(extrusion_params)
       when "translate"
         transform_component(id_or_name_params(op["id_or_name"]).merge("position" => op["delta"]))

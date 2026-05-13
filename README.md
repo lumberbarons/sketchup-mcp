@@ -184,6 +184,30 @@ create_extrusion({
 
 `extrude_to` may be less than `extrude_from` (e.g. building a sloped stud top-down). An optional `material` argument applies a color or named material in the same call.
 
+`holes` cuts through-cutouts into the extruded solid. Each hole is a 2D polygon in the same coordinate system as `profile`, must lie entirely inside the outer profile, and must not overlap any other hole:
+
+```text
+create_extrusion({
+  "name": "Siding W1",
+  "profile": [[0, 0], [38, 0], [38, 96], [0, 96]],
+  "extrude_axis": "y",
+  "extrude_from": 0,
+  "extrude_to": 0.5,
+  "holes": [[[8.25, 36], [33.25, 36], [33.25, 61], [8.25, 61]]]
+})
+```
+
+For non-axis-aligned solids (sloped roof slabs, angled brackets), pass a `plane` (`origin` + `normal`) and `extrude_depth` instead of `extrude_axis`. The 2D profile is laid out on the plane and the solid extrudes along the plane's normal — negative `extrude_depth` extrudes the opposite direction:
+
+```text
+create_extrusion({
+  "name": "Roof Sheathing W1",
+  "profile": [[0, 0], [48, 0], [48, 96], [0, 96]],
+  "plane": {"origin": [0, 0, 0], "normal": [0, -0.4472, 0.8944]},  # 6:12 pitch
+  "extrude_depth": 0.625
+})
+```
+
 #### Discovering existing geometry
 
 `find_groups` answers "what's already in the model?" without round-tripping through `eval_ruby`. Filters combine with AND; each match comes back with `id`, `name`, `bounds`, `layer`, and `material`. A `truncated: true` flag indicates results were capped at `limit` (default 200).

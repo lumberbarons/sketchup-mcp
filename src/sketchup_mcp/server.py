@@ -15,7 +15,7 @@ logging.basicConfig(
 logger = logging.getLogger("SketchupMCPServer")
 
 # Define version directly to avoid pkg_resources dependency
-__version__ = "1.8.0"
+__version__ = "1.9.0"
 logger.info(f"SketchupMCP Server version {__version__} starting up")
 
 
@@ -295,40 +295,69 @@ def create_extrusion(
     ctx: Context,
     name: str,
     profile: list[list[float]],
-    extrude_axis: str,
-    extrude_from: float,
-    extrude_to: float,
+    extrude_axis: str | None = None,
+    extrude_from: float | None = None,
+    extrude_to: float | None = None,
+    holes: list[list[list[float]]] | None = None,
+    plane: dict[str, list[float]] | None = None,
+    extrude_depth: float | None = None,
     material: str | None = None,
 ) -> str:
-    """Create a Group from a 2D profile extruded along the given axis.
+    """Create a Group from a 2D profile extruded into a solid.
 
-    The 2D profile is interpreted in the plane perpendicular to `extrude_axis`:
+    Two extrusion modes; pick one:
 
-    - `"x"`: each `[a, b]` is `[y, z]`; face sits at `x=extrude_from`.
-    - `"y"`: each `[a, b]` is `[x, z]`; face sits at `y=extrude_from`.
-    - `"z"`: each `[a, b]` is `[x, y]`; face sits at `z=extrude_from`.
+    1. **Axis-aligned** (`extrude_axis` + `extrude_from` + `extrude_to`):
+       The 2D profile is interpreted in the plane perpendicular to
+       `extrude_axis`:
+
+       - `"x"`: each `[a, b]` is `[y, z]`; face sits at `x=extrude_from`.
+       - `"y"`: each `[a, b]` is `[x, z]`; face sits at `y=extrude_from`.
+       - `"z"`: each `[a, b]` is `[x, y]`; face sits at `z=extrude_from`.
+
+       `extrude_to` may be less than `extrude_from`; sign drives direction.
+
+    2. **Arbitrary plane** (`plane` + `extrude_depth`): plane is
+       `{"origin": [x,y,z], "normal": [nx,ny,nz]}`. The 2D profile is laid
+       out on that plane via an internally-derived `(u, v)` basis; the
+       solid extrudes `extrude_depth` inches along the plane's normal.
+       Negative `extrude_depth` extrudes the opposite direction. Use this
+       for sloped roof slabs, angled brackets, anything not axis-aligned.
 
     Vertex winding (CW vs CCW) doesn't matter — face direction is chosen
-    from the requested extrude direction, not from the right-hand rule.
-    `extrude_to` may be less than `extrude_from`; sign drives direction.
-    The polygon is closed automatically (don't repeat the first vertex).
+    from the requested extrude direction. The polygon is closed
+    automatically (don't repeat the first vertex).
+
+    `holes` is an optional list of 2D polygons (same coordinate system as
+    `profile`) that become through-holes in the resulting solid. Each hole
+    must lie entirely inside the outer profile and must not overlap any
+    other hole.
 
     name: name assigned to the resulting Group.
     profile: ordered 2D vertices, length >= 3.
-    extrude_axis: "x", "y", or "z".
-    extrude_from: coordinate of the profile face on the extrusion axis.
-    extrude_to: coordinate where the extrusion ends.
+    extrude_axis: "x", "y", or "z". Mutually exclusive with `plane`.
+    extrude_from / extrude_to: coordinates on the extrusion axis.
+    holes: optional list of inner 2D polygons (each >= 3 vertices).
+    plane: optional `{"origin", "normal"}` for arbitrary-plane extrusion.
+        Mutually exclusive with `extrude_axis`.
+    extrude_depth: signed inches along the plane's normal; required with `plane`.
     material: optional name or "#RRGGBB" hex applied to the resulting group.
 
     Returns `{id, bounds: {min, max}, success}` — same shape as create_component.
     """
-    arguments: dict[str, Any] = {
-        "name": name,
-        "profile": profile,
-        "extrude_axis": extrude_axis,
-        "extrude_from": extrude_from,
-        "extrude_to": extrude_to,
-    }
+    arguments: dict[str, Any] = {"name": name, "profile": profile}
+    if extrude_axis is not None:
+        arguments["extrude_axis"] = extrude_axis
+    if extrude_from is not None:
+        arguments["extrude_from"] = extrude_from
+    if extrude_to is not None:
+        arguments["extrude_to"] = extrude_to
+    if holes is not None:
+        arguments["holes"] = holes
+    if plane is not None:
+        arguments["plane"] = plane
+    if extrude_depth is not None:
+        arguments["extrude_depth"] = extrude_depth
     if material is not None:
         arguments["material"] = material
     return _call_sketchup(ctx, "create_extrusion", arguments)
