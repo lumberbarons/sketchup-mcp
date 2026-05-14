@@ -57,12 +57,15 @@ func callSketchup(s Sender, rubyTool string, args any) (*mcp.CallToolResult, any
 	return textResult(successEnvelope(result)), nil, nil
 }
 
+// argsToMap normalises the forwarded arguments to JSON-shaped types
+// (map[string]any / []any / json.Number-ish primitives). Always round-tripping
+// through JSON — rather than short-circuiting when args is already a
+// map[string]any — keeps the on-wire types stable: a forwarded []map[string]any
+// becomes []any of map[string]any after the round trip, which is what the
+// Ruby side will see across a real TCP boundary.
 func argsToMap(args any) (map[string]any, error) {
 	if args == nil {
 		return map[string]any{}, nil
-	}
-	if m, ok := args.(map[string]any); ok {
-		return m, nil
 	}
 	raw, err := json.Marshal(args)
 	if err != nil {
@@ -370,6 +373,15 @@ func registerBooleanOp(srv *mcp.Server, s Sender) {
 operation: union | subtract | intersect | outer_shell. Both inputs must be
 manifold solid Groups. delete_originals=true (default) consumes both inputs.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in BooleanOpInput) (*mcp.CallToolResult, any, error) {
+		switch in.Operation {
+		case "union", "subtract", "intersect", "outer_shell":
+			// ok
+		default:
+			return textResult(failureEnvelope(
+				"invalid operation: " + in.Operation +
+					" (expected union, subtract, intersect, or outer_shell)",
+			)), nil, nil
+		}
 		deleteOriginals := true
 		if in.DeleteOriginals != nil {
 			deleteOriginals = *in.DeleteOriginals
