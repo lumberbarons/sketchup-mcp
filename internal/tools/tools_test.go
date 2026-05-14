@@ -339,10 +339,10 @@ func TestTransformComponentForwardsBothWhenBothGiven(t *testing.T) {
 
 func TestToolForwardsExpectedArguments(t *testing.T) {
 	cases := []struct {
-		toolName            string
-		mcpArgs             map[string]any
-		expectedRubyMethod  string
-		expectedRubyArgs    map[string]any
+		toolName           string
+		mcpArgs            map[string]any
+		expectedRubyMethod string
+		expectedRubyArgs   map[string]any
 	}{
 		{
 			toolName:           "delete_component",
@@ -375,8 +375,8 @@ func TestToolForwardsExpectedArguments(t *testing.T) {
 			expectedRubyArgs:   map[string]any{"format": "skp"},
 		},
 		{
-			toolName: "create_mortise_tenon",
-			mcpArgs:  map[string]any{"mortise_id": "m", "tenon_id": "t"},
+			toolName:           "create_mortise_tenon",
+			mcpArgs:            map[string]any{"mortise_id": "m", "tenon_id": "t"},
 			expectedRubyMethod: "create_mortise_tenon",
 			expectedRubyArgs: map[string]any{
 				"mortise_id": "m", "tenon_id": "t",
@@ -385,8 +385,8 @@ func TestToolForwardsExpectedArguments(t *testing.T) {
 			},
 		},
 		{
-			toolName: "create_dovetail",
-			mcpArgs:  map[string]any{"tail_id": "t", "pin_id": "p"},
+			toolName:           "create_dovetail",
+			mcpArgs:            map[string]any{"tail_id": "t", "pin_id": "p"},
 			expectedRubyMethod: "create_dovetail",
 			expectedRubyArgs: map[string]any{
 				"tail_id": "t", "pin_id": "p",
@@ -396,14 +396,14 @@ func TestToolForwardsExpectedArguments(t *testing.T) {
 			},
 		},
 		{
-			toolName: "create_finger_joint",
-			mcpArgs:  map[string]any{"board1_id": "a", "board2_id": "b"},
+			toolName:           "create_finger_joint",
+			mcpArgs:            map[string]any{"board1_id": "a", "board2_id": "b"},
 			expectedRubyMethod: "create_finger_joint",
 			expectedRubyArgs: map[string]any{
 				"board1_id": "a", "board2_id": "b",
 				"width": 1.0, "height": 1.0, "depth": 1.0,
 				"num_fingers": 5,
-				"offset_x": 0.0, "offset_y": 0.0, "offset_z": 0.0,
+				"offset_x":    0.0, "offset_y": 0.0, "offset_z": 0.0,
 			},
 		},
 		{

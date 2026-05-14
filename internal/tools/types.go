@@ -97,10 +97,10 @@ type ExportSceneInput struct {
 
 // BooleanOpInput backs the boolean_op tool.
 type BooleanOpInput struct {
-	Operation        string `json:"operation"`
-	TargetID         int64  `json:"target_id"`
-	ToolID           int64  `json:"tool_id"`
-	DeleteOriginals  *bool  `json:"delete_originals,omitempty"`
+	Operation       string `json:"operation"`
+	TargetID        int64  `json:"target_id"`
+	ToolID          int64  `json:"tool_id"`
+	DeleteOriginals *bool  `json:"delete_originals,omitempty"`
 }
 
 // CreateMortiseTenonInput backs the create_mortise_tenon tool. Numeric fields

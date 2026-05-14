@@ -28,8 +28,8 @@ func nextRequestID() uint64 { return requestIDs.Add(1) }
 //	{"success": true,  "result": <payload>, "error": null}
 //	{"success": false, "result": null,      "error": "<message>"}
 type envelope struct {
-	Success bool   `json:"success"`
-	Result  any    `json:"result"`
+	Success bool    `json:"success"`
+	Result  any     `json:"result"`
 	Error   *string `json:"error"`
 }
 
@@ -387,10 +387,10 @@ manifold solid Groups. delete_originals=true (default) consumes both inputs.`,
 			deleteOriginals = *in.DeleteOriginals
 		}
 		return callSketchup(s, "boolean_operation", map[string]any{
-			"operation":         in.Operation,
-			"target_id":         in.TargetID,
-			"tool_id":           in.ToolID,
-			"delete_originals":  deleteOriginals,
+			"operation":        in.Operation,
+			"target_id":        in.TargetID,
+			"tool_id":          in.ToolID,
+			"delete_originals": deleteOriginals,
 		})
 	})
 }

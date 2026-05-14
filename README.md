@@ -24,22 +24,24 @@ The system consists of two main components:
 
 - SketchUp 2021 or newer (the extension uses `UI.start_timer` and
   modern Ruby APIs available in 2021+)
-- Python 3.10 or newer
-- macOS or Windows — both are supported. The install hints below show
-  Homebrew commands; on Windows use the equivalent step linked in
-  each tool's docs.
+- macOS, Linux, or Windows — prebuilt binaries are published for
+  darwin/arm64, darwin/amd64, linux/amd64, linux/arm64, and
+  windows/amd64.
 
 ## Installation
 
-### Python Packaging
+### MCP server binary
 
-We're using uv, so you'll need to install it. On macOS:
+Download the latest archive for your platform from the
+[GitHub Releases](https://github.com/lumberbarons/sketchup-mcp/releases)
+page, extract it, and put the `sketchup-mcp` binary somewhere on your
+`PATH`. The binary is a single static file — no runtime needed.
+
+Alternatively, if you have a recent Go toolchain installed:
 
 ```bash
-brew install uv
+go install github.com/lumberbarons/sketchup-mcp/cmd/sketchup-mcp@latest
 ```
-
-For other platforms see the [uv install docs](https://docs.astral.sh/uv/getting-started/installation/).
 
 ### Sketchup Extension
 
@@ -62,34 +64,34 @@ For other platforms see the [uv install docs](https://docs.astral.sh/uv/getting-
 2. Start the MCP server in a terminal so you can verify the
    connection before wiring it up to a client:
    ```bash
-   uvx sketchup-mcp
+   sketchup-mcp
    ```
    On a successful probe you'll see a log line like:
    ```
-   SketchupMCP Server version X.Y.Z starting up
-   SketchUp reachable at localhost:9876
+   level=INFO msg="SketchupMCP server starting" version=X.Y.Z
+   level=INFO msg="SketchUp reachable" host=localhost port=9876
    ```
    If the second line says "SketchUp not reachable", confirm step 1
-   completed and that nothing else is bound to port 9876.
+   completed and that nothing else is bound to port 9876. Override
+   the target with `--host` / `--port` if needed.
 3. Leave the server running, or stop it with `Ctrl-C` once you're
    ready to launch it from your MCP client (see below).
 
 ### Using with Claude
 
-Configure Claude to use the MCP server by adding the following to your Claude configuration:
+Configure Claude to use the MCP server by pointing at the binary you
+downloaded:
 
 ```json
     "mcpServers": {
         "sketchup": {
-            "command": "uvx",
-            "args": [
-                "sketchup-mcp"
-            ]
+            "command": "/usr/local/bin/sketchup-mcp"
         }
     }
 ```
 
-This will pull the [latest from PyPI](https://pypi.org/project/sketchup-mcp/)
+Use the absolute path the install step produced (or wherever the
+binary lives on your `PATH`).
 
 Once connected, Claude can interact with Sketchup using the following capabilities:
 

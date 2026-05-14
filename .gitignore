@@ -30,6 +30,9 @@ ENV/
 # Sketchup specific
 *.rbz
 
+# Go
+/bin/
+
 # OS specific
 .DS_Store
 .DS_Store?
