@@ -92,6 +92,7 @@ async def test_every_tool_is_registered(fake: FakeSketchupClient) -> None:
     names = {t.name for t in listed.tools}
     assert names == {
         "batch_create",
+        "boolean_op",
         "create_component",
         "create_extrusion",
         "delete_component",
@@ -583,6 +584,55 @@ async def test_find_groups_returns_empty_list_when_no_matches(
         "result": {"groups": [], "truncated": False},
         "error": None,
     }
+
+
+# ---------------------------------------------------------------------------
+# boolean_op — Pin the wire shape for the SU Pro Solid Tools wrapper. The
+# operation itself is delegated to Sketchup::Group#union/subtract/intersect/
+# outer_shell on the Ruby side and can't run without SketchUp.
+# ---------------------------------------------------------------------------
+
+
+async def test_boolean_op_forwards_subtract(fake: FakeSketchupClient) -> None:
+    async with make_session() as session:
+        await session.call_tool(
+            "boolean_op",
+            {"operation": "subtract", "target_id": 101, "tool_id": 202},
+        )
+    assert fake.last_tool_name == "boolean_operation"
+    assert fake.last_arguments == {
+        "operation": "subtract",
+        "target_id": 101,
+        "tool_id": 202,
+        "delete_originals": True,
+    }
+
+
+async def test_boolean_op_forwards_keep_originals(fake: FakeSketchupClient) -> None:
+    async with make_session() as session:
+        await session.call_tool(
+            "boolean_op",
+            {
+                "operation": "union",
+                "target_id": 1,
+                "tool_id": 2,
+                "delete_originals": False,
+            },
+        )
+    assert fake.last_arguments["delete_originals"] is False
+
+
+async def test_boolean_op_rejects_unknown_operation(fake: FakeSketchupClient) -> None:
+    """The Literal type on the Python side should reject anything outside the
+    four supported operations before it ever hits the wire."""
+    async with make_session() as session:
+        result = await session.call_tool(
+            "boolean_op",
+            {"operation": "merge", "target_id": 1, "tool_id": 2},
+        )
+    # FastMCP surfaces the validation error; the Ruby side must not have been called.
+    assert fake.calls == []
+    assert result.isError is True
 
 
 # ---------------------------------------------------------------------------

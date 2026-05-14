@@ -1439,186 +1439,70 @@ module SU_MCP
       end
     end
     
+    # CSG via SketchUp Pro's Solid Tools (Sketchup::Group#union/subtract/intersect/
+     # outer_shell). The Pro API consumes both inputs and returns a new manifold
+     # group on success or nil if either input isn't a solid / Pro is unavailable.
+     # `delete_originals` is accepted for back-compat but is implicit — Solid Tools
+     # always consume the operands. Set it to false to keep a duplicate by copying
+     # the inputs before the operation.
     def boolean_operation(params)
       log "Performing boolean operation with params: #{params.inspect}"
       model = Sketchup.active_model
-      
-      # Get operation type
-      operation_type = params["operation"]
-      unless ["union", "difference", "intersection"].include?(operation_type)
-        raise "Invalid boolean operation: #{operation_type}. Must be 'union', 'difference', or 'intersection'."
+
+      operation = params["operation"].to_s
+      unless %w[union subtract intersect outer_shell difference intersection].include?(operation)
+        raise "Invalid boolean operation: #{operation}. Must be one of: union, subtract, intersect, outer_shell."
       end
-      
-      # Get target and tool entities
+      # Tolerate the older verb spellings used by earlier callers.
+      operation = "subtract" if operation == "difference"
+      operation = "intersect" if operation == "intersection"
+
       target_id = params["target_id"].to_s.gsub('"', '')
       tool_id = params["tool_id"].to_s.gsub('"', '')
-      
-      log "Looking for target entity with ID: #{target_id}"
+
       target_entity = model.find_entity_by_id(target_id.to_i)
-      
-      log "Looking for tool entity with ID: #{tool_id}"
       tool_entity = model.find_entity_by_id(tool_id.to_i)
-      
+
       unless target_entity && tool_entity
         missing = []
         missing << "target" unless target_entity
         missing << "tool" unless tool_entity
         raise "Entity not found: #{missing.join(', ')}"
       end
-      
-      # Ensure both entities are groups or component instances
-      unless (target_entity.is_a?(Sketchup::Group) || target_entity.is_a?(Sketchup::ComponentInstance)) &&
-             (tool_entity.is_a?(Sketchup::Group) || tool_entity.is_a?(Sketchup::ComponentInstance))
-        raise "Boolean operations require groups or component instances"
+
+      unless target_entity.is_a?(Sketchup::Group) && tool_entity.is_a?(Sketchup::Group)
+        raise "Boolean operations require two Sketchup::Group inputs (got #{target_entity.class} and #{tool_entity.class})"
       end
-      
-      # Create a new group to hold the result
-      result_group = model.active_entities.add_group
-      
-      # Perform the boolean operation
-      case operation_type
-      when "union"
-        log "Performing union operation"
-        perform_union(target_entity, tool_entity, result_group)
-      when "difference"
-        log "Performing difference operation"
-        perform_difference(target_entity, tool_entity, result_group)
-      when "intersection"
-        log "Performing intersection operation"
-        perform_intersection(target_entity, tool_entity, result_group)
+
+      # Solid Tools require both inputs to be manifold solids.
+      unless target_entity.respond_to?(:manifold?) && target_entity.manifold? && tool_entity.manifold?
+        raise "Boolean operations require manifold solids — check inputs with Sketchup::Group#manifold?"
       end
-      
-      # Clean up original entities if requested
-      if params["delete_originals"]
-        target_entity.erase! if target_entity.valid?
-        tool_entity.erase! if tool_entity.valid?
+
+      # delete_originals defaults to true (Solid Tools' native behavior). When
+      # false, work on copies so the originals survive.
+      keep_originals = params.key?("delete_originals") && params["delete_originals"] == false
+      if keep_originals
+        target_op = target_entity.copy
+        tool_op = tool_entity.copy
+      else
+        target_op = target_entity
+        tool_op = tool_entity
       end
-      
-      # Return the result
-      { 
-        success: true, 
-        id: result_group.entityID
+
+      result_group = target_op.send(operation, tool_op)
+      if result_group.nil?
+        # Clean up any copies we made for keep_originals mode.
+        target_op.erase! if keep_originals && target_op.valid?
+        tool_op.erase! if keep_originals && tool_op.valid?
+        raise "Solid Tools #{operation} returned nil — requires SketchUp Pro and two manifold solids"
+      end
+
+      {
+        success: true,
+        id: result_group.entityID,
+        manifold: result_group.respond_to?(:manifold?) ? result_group.manifold? : nil
       }
-    end
-    
-    def perform_union(target, tool, result_group)
-      model = Sketchup.active_model
-      
-      # Create temporary copies of the target and tool
-      target_copy = target.copy
-      tool_copy = tool.copy
-      
-      # Get the transformation of each entity
-      target_transform = target.transformation
-      tool_transform = tool.transformation
-      
-      # Apply the transformations to the copies
-      target_copy.transform!(target_transform)
-      tool_copy.transform!(tool_transform)
-      
-      # Get the entities from the copies
-      target_entities = target_copy.is_a?(Sketchup::Group) ? target_copy.entities : target_copy.definition.entities
-      tool_entities = tool_copy.is_a?(Sketchup::Group) ? tool_copy.entities : tool_copy.definition.entities
-      
-      # Copy all entities from target to result
-      target_entities.each do |entity|
-        entity.copy(result_group.entities)
-      end
-      
-      # Copy all entities from tool to result
-      tool_entities.each do |entity|
-        entity.copy(result_group.entities)
-      end
-      
-      # Clean up temporary copies
-      target_copy.erase!
-      tool_copy.erase!
-      
-      # Outer shell - this will merge overlapping geometry
-      result_group.entities.outer_shell
-    end
-    
-    def perform_difference(target, tool, result_group)
-      model = Sketchup.active_model
-      
-      # Create temporary copies of the target and tool
-      target_copy = target.copy
-      tool_copy = tool.copy
-      
-      # Get the transformation of each entity
-      target_transform = target.transformation
-      tool_transform = tool.transformation
-      
-      # Apply the transformations to the copies
-      target_copy.transform!(target_transform)
-      tool_copy.transform!(tool_transform)
-      
-      # Get the entities from the copies
-      target_entities = target_copy.is_a?(Sketchup::Group) ? target_copy.entities : target_copy.definition.entities
-      tool_entities = tool_copy.is_a?(Sketchup::Group) ? tool_copy.entities : tool_copy.definition.entities
-      
-      # Copy all entities from target to result
-      target_entities.each do |entity|
-        entity.copy(result_group.entities)
-      end
-      
-      # Create a temporary group for the tool
-      temp_tool_group = model.active_entities.add_group
-      
-      # Copy all entities from tool to temp group
-      tool_entities.each do |entity|
-        entity.copy(temp_tool_group.entities)
-      end
-      
-      # Subtract the tool from the result
-      result_group.entities.subtract(temp_tool_group.entities)
-      
-      # Clean up temporary copies and groups
-      target_copy.erase!
-      tool_copy.erase!
-      temp_tool_group.erase!
-    end
-    
-    def perform_intersection(target, tool, result_group)
-      model = Sketchup.active_model
-      
-      # Create temporary copies of the target and tool
-      target_copy = target.copy
-      tool_copy = tool.copy
-      
-      # Get the transformation of each entity
-      target_transform = target.transformation
-      tool_transform = tool.transformation
-      
-      # Apply the transformations to the copies
-      target_copy.transform!(target_transform)
-      tool_copy.transform!(tool_transform)
-      
-      # Get the entities from the copies
-      target_entities = target_copy.is_a?(Sketchup::Group) ? target_copy.entities : target_copy.definition.entities
-      tool_entities = tool_copy.is_a?(Sketchup::Group) ? tool_copy.entities : tool_copy.definition.entities
-      
-      # Create temporary groups for target and tool
-      temp_target_group = model.active_entities.add_group
-      temp_tool_group = model.active_entities.add_group
-      
-      # Copy all entities from target and tool to temp groups
-      target_entities.each do |entity|
-        entity.copy(temp_target_group.entities)
-      end
-      
-      tool_entities.each do |entity|
-        entity.copy(temp_tool_group.entities)
-      end
-      
-      # Perform the intersection
-      result_group.entities.intersect_with(temp_target_group.entities, temp_tool_group.entities)
-      
-      # Clean up temporary copies and groups
-      target_copy.erase!
-      tool_copy.erase!
-      temp_target_group.erase!
-      temp_tool_group.erase!
     end
     
     def chamfer_edges(params)

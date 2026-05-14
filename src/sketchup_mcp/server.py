@@ -4,7 +4,7 @@ import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, closing
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.fastmcp import Context, FastMCP
 
@@ -537,6 +537,44 @@ def set_material(ctx: Context, id: str, material: str) -> str:
 def export_scene(ctx: Context, format: str = "skp") -> str:
     """Export the current scene"""
     return _call_sketchup(ctx, "export", {"format": format})
+
+
+@mcp.tool()
+def boolean_op(
+    ctx: Context,
+    operation: Literal["union", "subtract", "intersect", "outer_shell"],
+    target_id: int,
+    tool_id: int,
+    delete_originals: bool = True,
+) -> str:
+    """CSG via SketchUp Pro's Solid Tools — produces a manifold solid group.
+
+    Use this to cut holes (`subtract`), merge solids (`union`), keep only the
+    overlap (`intersect`), or join two solids while removing internal geometry
+    (`outer_shell`). Both inputs must be `Sketchup::Group` instances and must
+    be manifold solids — non-manifold inputs are rejected with a clear error.
+
+    operation: "union" | "subtract" | "intersect" | "outer_shell".
+    target_id: entity ID of the first group (the operand `subtract` keeps).
+    tool_id: entity ID of the second group (the operand `subtract` removes).
+    delete_originals: True (default) consumes both inputs (Solid Tools' native
+        behavior). False copies the inputs first so the originals survive —
+        slightly slower and creates extra entities.
+
+    Returns `{id, manifold}` for the new group on success. Fails with a clear
+    error if Solid Tools is unavailable (non-Pro SketchUp) or the inputs
+    aren't manifold.
+    """
+    return _call_sketchup(
+        ctx,
+        "boolean_operation",
+        {
+            "operation": operation,
+            "target_id": target_id,
+            "tool_id": tool_id,
+            "delete_originals": delete_originals,
+        },
+    )
 
 
 @mcp.tool()
