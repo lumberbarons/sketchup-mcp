@@ -526,6 +526,65 @@ async def test_find_groups_omits_unset_filters(fake: FakeSketchupClient) -> None
         assert key not in fake.last_arguments, f"unset {key} must be omitted"
 
 
+async def test_find_groups_returns_structured_payload(fake: FakeSketchupClient) -> None:
+    """Regression for sch-wqb: find_groups must surface the structured
+    {groups, truncated} payload rather than collapsing to 'Success'. The Ruby
+    handler now merges its extra keys into the JSON-RPC result, so the fake
+    mirrors that shape (the wrapper fields plus groups/truncated)."""
+    sample = [
+        {
+            "id": 101,
+            "name": "Rafter W 1",
+            "bounds": {"min": [0.0, 0.0, 0.0], "max": [1.5, 96.0, 5.5]},
+            "layer": "Layer0",
+            "material": None,
+        },
+        {
+            "id": 102,
+            "name": "Rafter W 2",
+            "bounds": {"min": [16.0, 0.0, 0.0], "max": [17.5, 96.0, 5.5]},
+            "layer": "Layer0",
+            "material": "Cherry",
+        },
+    ]
+    fake.next_result = {
+        "content": [{"type": "text", "text": "Success"}],
+        "isError": False,
+        "success": True,
+        "resourceId": None,
+        "groups": sample,
+        "truncated": False,
+    }
+    async with make_session() as session:
+        result = await session.call_tool("find_groups", {"name_prefix": "Rafter W"})
+    assert envelope(result) == {
+        "success": True,
+        "result": {"groups": sample, "truncated": False},
+        "error": None,
+    }
+
+
+async def test_find_groups_returns_empty_list_when_no_matches(
+    fake: FakeSketchupClient,
+) -> None:
+    """No matches must surface as an empty list, not the literal 'Success'."""
+    fake.next_result = {
+        "content": [{"type": "text", "text": "Success"}],
+        "isError": False,
+        "success": True,
+        "resourceId": None,
+        "groups": [],
+        "truncated": False,
+    }
+    async with make_session() as session:
+        result = await session.call_tool("find_groups", {})
+    assert envelope(result) == {
+        "success": True,
+        "result": {"groups": [], "truncated": False},
+        "error": None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # create_extrusion — non-axis-aligned profiles on each axis, reverse-direction
 # extrusion, and the material round-trip. Geometry construction itself lives

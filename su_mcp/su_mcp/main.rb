@@ -262,14 +262,20 @@ module SU_MCP
 
         log "Tool call result: #{result.inspect}"
         if result[:success]
+          # Merge any extra structured fields from the handler (e.g. find_groups'
+          # :groups + :truncated, create_*'s :bounds) into the JSON-RPC result so
+          # they survive the round trip. Without this, only :result and :id are
+          # transmitted and richer payloads collapse to "Success".
+          extra = result.reject { |k, _| %i[success result id].include?(k) }
+          inner = {
+            content: [{ type: "text", text: result[:result] || "Success" }],
+            isError: false,
+            success: true,
+            resourceId: result[:id]
+          }.merge(extra)
           response = {
             jsonrpc: request["jsonrpc"] || "2.0",
-            result: {
-              content: [{ type: "text", text: result[:result] || "Success" }],
-              isError: false,
-              success: true,
-              resourceId: result[:id]
-            },
+            result: inner,
             id: request["id"]
           }
           log "Sending success response: #{response.inspect}"

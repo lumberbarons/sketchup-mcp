@@ -504,7 +504,21 @@ def find_groups(
         arguments["in_bounds"] = in_bounds
     if parent_id is not None:
         arguments["parent_id"] = parent_id
-    return _call_sketchup(ctx, "find_groups", arguments)
+    raw = _call_sketchup(ctx, "find_groups", arguments)
+    envelope = json.loads(raw)
+    if not envelope["success"]:
+        return raw
+    inner = envelope["result"] if isinstance(envelope["result"], dict) else {}
+    return json.dumps(
+        {
+            "success": True,
+            "result": {
+                "groups": inner.get("groups", []),
+                "truncated": inner.get("truncated", False),
+            },
+            "error": None,
+        }
+    )
 
 
 @mcp.tool()
