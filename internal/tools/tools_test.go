@@ -678,6 +678,36 @@ func TestFindGroupsReturnsStructuredPayload(t *testing.T) {
 	}
 }
 
+// Regression for sch-aat: a previous implementation re-emitted only the
+// {groups, truncated} keys, dropping any other field the Ruby side sent.
+// The MCP-frame slimmer now forwards every key that isn't part of the
+// wrapper (content/isError/success/resourceId), so a Ruby-side extension
+// (e.g. query_time_ms, total_count) reaches Go callers without coordinated
+// edits on the Go side. This test pins that contract.
+func TestFindGroupsForwardsUnknownRubySideFields(t *testing.T) {
+	s := newSession(t)
+	s.fake.NextResult = map[string]any{
+		"content":       []any{map[string]any{"type": "text", "text": "Success"}},
+		"isError":       false,
+		"success":       true,
+		"resourceId":    nil,
+		"groups":        []any{},
+		"truncated":     false,
+		"query_time_ms": 17.0,
+		"total_count":   float64(0),
+	}
+	env := envelopeOf(t, s.call(t, "find_groups", map[string]any{}))
+	want := map[string]any{
+		"groups":        []any{},
+		"truncated":     false,
+		"query_time_ms": 17.0,
+		"total_count":   float64(0),
+	}
+	if !jsonEqual(env.Result, want) {
+		t.Fatalf("result: got %v, want %v", env.Result, want)
+	}
+}
+
 func TestFindGroupsReturnsEmptyListWhenNoMatches(t *testing.T) {
 	s := newSession(t)
 	s.fake.NextResult = map[string]any{
