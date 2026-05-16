@@ -65,6 +65,21 @@ func TestUnwrap_RaisesWithErrorMessage(t *testing.T) {
 	}
 }
 
+func TestUnwrap_NullErrorIsSuccess(t *testing.T) {
+	env := map[string]any{
+		"jsonrpc": "2.0", "id": float64(1),
+		"result": "ok",
+		"error":  nil,
+	}
+	got, err := unwrapResponse(env)
+	if err != nil {
+		t.Fatalf("want nil error for {error: null}, got %v", err)
+	}
+	if got != "ok" {
+		t.Fatalf("want result 'ok', got %v", got)
+	}
+}
+
 func TestUnwrap_UnknownWhenMessageMissing(t *testing.T) {
 	env := map[string]any{"error": map[string]any{"code": float64(-1)}}
 	_, err := unwrapResponse(env)

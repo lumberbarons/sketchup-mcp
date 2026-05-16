@@ -150,17 +150,21 @@ func (c *Client) readResponse(conn net.Conn) (any, error) {
 	return parsed, nil
 }
 
-// unwrapResponse mirrors the Python _unwrap_response:
+// unwrapResponse extracts the result from a JSON-RPC envelope:
 //   - non-dict responses are returned as-is
-//   - presence of an "error" key (even with null value, mirroring Python's
-//     `in` check) raises with the error.message or a default string
+//   - a non-null "error" value raises with error.message or a default string;
+//     {"error": null} is treated as success (this diverges intentionally from
+//     the Python _unwrap_response, whose `in` check treats key presence —
+//     even with null value — as failure, and would silently discard the real
+//     result for standard JSON-RPC 2.0 envelopes that include error=null on
+//     success)
 //   - otherwise returns result["result"] or an empty map if missing
 func unwrapResponse(response any) (any, error) {
 	m, ok := response.(map[string]any)
 	if !ok {
 		return response, nil
 	}
-	if errVal, present := m["error"]; present {
+	if errVal, present := m["error"]; present && errVal != nil {
 		msg := "Unknown error from Sketchup"
 		if errMap, ok := errVal.(map[string]any); ok {
 			if s, ok := errMap["message"].(string); ok && s != "" {
