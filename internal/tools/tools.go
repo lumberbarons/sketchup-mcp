@@ -480,11 +480,14 @@ func registerCreateFingerJoint(srv *mcp.Server, s Sender) {
 		Name:        "create_finger_joint",
 		Description: "Create a finger joint (box joint) between two components",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in CreateFingerJointInput) (*mcp.CallToolResult, any, error) {
+		// Defaults: width=2 and num_fingers=5 give slot_width = 2/9 ≈ 0.22,
+		// well above the 1e-4 build-safe floor; depth=1 fits two adjacent
+		// 1-inch boards without overshooting their thickness.
 		return callSketchup(s, "create_finger_joint", map[string]any{
 			"board1_id":   in.Board1ID,
 			"board2_id":   in.Board2ID,
-			"width":       defaultFloat(in.Width, 1.0),
-			"height":      defaultFloat(in.Height, 1.0),
+			"width":       defaultFloat(in.Width, 2.0),
+			"height":      defaultFloat(in.Height, 2.0),
 			"depth":       defaultFloat(in.Depth, 1.0),
 			"num_fingers": defaultInt(in.NumFingers, 5),
 			"offset_x":    in.OffsetX,

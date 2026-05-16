@@ -2300,168 +2300,155 @@ module SU_MCP
     def create_finger_joint(params)
       log "Creating finger joint with params: #{params.inspect}"
       model = Sketchup.active_model
-      
+
       # Get the two board IDs
       board1_id = params["board1_id"].to_s.gsub('"', '')
       board2_id = params["board2_id"].to_s.gsub('"', '')
-      
+
       log "Looking for board 1 with ID: #{board1_id}"
       board1 = model.find_entity_by_id(board1_id.to_i)
-      
+
       log "Looking for board 2 with ID: #{board2_id}"
       board2 = model.find_entity_by_id(board2_id.to_i)
-      
+
       unless board1 && board2
         missing = []
         missing << "board 1" unless board1
         missing << "board 2" unless board2
         raise "Entity not found: #{missing.join(', ')}"
       end
-      
+
       # Ensure both entities are groups or component instances
       unless (board1.is_a?(Sketchup::Group) || board1.is_a?(Sketchup::ComponentInstance)) &&
              (board2.is_a?(Sketchup::Group) || board2.is_a?(Sketchup::ComponentInstance))
         raise "Finger joint operation requires groups or component instances"
       end
-      
+
       # Get joint parameters
-      width = params["width"] || 1.0
+      width = params["width"] || 2.0
       height = params["height"] || 2.0
       depth = params["depth"] || 1.0
-      num_fingers = params["num_fingers"] || 5
+      num_fingers = (params["num_fingers"] || 5).to_i
       offset_x = params["offset_x"] || 0.0
       offset_y = params["offset_y"] || 0.0
       offset_z = params["offset_z"] || 0.0
-      
+
+      # Validate up-front so degenerate params produce a readable error
+      # rather than SketchUp's 'Duplicate points in array'.
+      validate_finger_joint_geometry!(width, height, depth, num_fingers)
+
       # Create the fingers on board 1
       board1_result = create_board1_fingers(board1, width, height, depth, num_fingers, offset_x, offset_y, offset_z)
-      
+
       # Create the matching slots on board 2
       board2_result = create_board2_slots(board2, width, height, depth, num_fingers, offset_x, offset_y, offset_z)
-      
+
       # Return the result
-      { 
-        success: true, 
+      {
+        success: true,
         board1_id: board1_result[:id],
         board2_id: board2_result[:id]
       }
     end
-    
-    def create_board1_fingers(board, width, height, depth, num_fingers, offset_x, offset_y, offset_z)
-      model = Sketchup.active_model
-      
-      # Get the board's entities
-      entities = board.is_a?(Sketchup::Group) ? board.entities : board.definition.entities
-      
-      # Get the board's bounds
-      bounds = board.bounds
-      
-      # Calculate the position of the joint
-      center_x = bounds.center.x + offset_x
-      center_y = bounds.center.y + offset_y
-      center_z = bounds.center.z + offset_z
-      
-      # Calculate the width of each finger
-      finger_width = width / num_fingers
-      
-      # Create a group for the fingers
-      fingers_group = entities.add_group
-      
-      # Create a base rectangle for the joint area
-      base_face = fingers_group.entities.add_face(
-        [center_x - width/2, center_y - height/2, center_z],
-        [center_x + width/2, center_y - height/2, center_z],
-        [center_x + width/2, center_y + height/2, center_z],
-        [center_x - width/2, center_y + height/2, center_z]
-      )
-      
-      # Create cutouts for the spaces between fingers
-      (num_fingers / 2).times do |i|
-        # Calculate the position of this cutout
-        cutout_center_x = center_x - width/2 + finger_width * (2 * i + 1)
-        
-        # Create a group for the cutout
-        cutout_group = entities.add_group
-        
-        # Create the cutout shape
-        cutout_face = cutout_group.entities.add_face(
-          [cutout_center_x - finger_width/2, center_y - height/2, center_z],
-          [cutout_center_x + finger_width/2, center_y - height/2, center_z],
-          [cutout_center_x + finger_width/2, center_y + height/2, center_z],
-          [cutout_center_x - finger_width/2, center_y + height/2, center_z]
-        )
-        
-        # Extrude the cutout
-        cutout_face.pushpull(depth)
-        
-        # Subtract the cutout from the fingers
-        fingers_group.entities.subtract(cutout_group.entities)
-        
-        # Clean up the temporary group
-        cutout_group.erase!
+
+    # Pure: catch parameter combos that would produce degenerate finger
+    # rectangles before add_face turns them into 'Duplicate points in array'.
+    def validate_finger_joint_geometry!(width, height, depth, num_fingers)
+      raise "num_fingers must be >= 1 (got #{num_fingers})" if num_fingers < 1
+      raise "width must be > 0 (got #{width})" if width <= 0
+      raise "height must be > 0 (got #{height})" if height <= 0
+      raise "depth must be > 0 (got #{depth})" if depth <= 0
+
+      # Proper finger joint: num_fingers fingers + (num_fingers - 1) gaps,
+      # each of equal slot_width. Reject configurations where the per-slot
+      # width is below a build-safe floor (1e-4 inches).
+      segments = 2 * num_fingers - 1
+      slot_width = width.to_f / segments
+      if slot_width < 1.0e-4
+        raise "finger joint slot width #{slot_width} too small for width=#{width}, num_fingers=#{num_fingers} — increase width or reduce num_fingers"
       end
-      
-      # Extrude the fingers
-      base_face.pushpull(depth)
-      
-      # Return the result
-      { 
-        success: true, 
-        id: board.entityID
-      }
     end
     
-    def create_board2_slots(board, width, height, depth, num_fingers, offset_x, offset_y, offset_z)
+    # Build a top-level rectangular cutout group at the joint plane.
+    # Centralized so board1 and board2 share the same slot geometry.
+    def finger_slot_group(model, cx, cz, slot_width, height, depth, cy_min, cy_max)
+      g = model.active_entities.add_group
+      pts = dedupe_points([
+        [cx - slot_width/2, cy_min, cz],
+        [cx + slot_width/2, cy_min, cz],
+        [cx + slot_width/2, cy_max, cz],
+        [cx - slot_width/2, cy_max, cz]
+      ])
+      raise "finger slot collapsed to #{pts.length} points" if pts.length < 3
+      face = g.entities.add_face(pts)
+      face.pushpull(depth)
+      g
+    end
+
+    def create_board1_fingers(board, width, height, depth, num_fingers, offset_x, offset_y, offset_z)
       model = Sketchup.active_model
-      
-      # Get the board's entities
-      entities = board.is_a?(Sketchup::Group) ? board.entities : board.definition.entities
-      
-      # Get the board's bounds
       bounds = board.bounds
-      
-      # Calculate the position of the joint
+
       center_x = bounds.center.x + offset_x
       center_y = bounds.center.y + offset_y
       center_z = bounds.center.z + offset_z
-      
-      # Calculate the width of each finger
-      finger_width = width / num_fingers
-      
-      # Create a group for the slots
-      slots_group = entities.add_group
-      
-      # Create cutouts for the fingers from board 1
-      (num_fingers / 2 + num_fingers % 2).times do |i|
-        # Calculate the position of this cutout
-        cutout_center_x = center_x - width/2 + finger_width * (2 * i)
-        
-        # Create a group for the cutout
-        cutout_group = entities.add_group
-        
-        # Create the cutout shape
-        cutout_face = cutout_group.entities.add_face(
-          [cutout_center_x - finger_width/2, center_y - height/2, center_z],
-          [cutout_center_x + finger_width/2, center_y - height/2, center_z],
-          [cutout_center_x + finger_width/2, center_y + height/2, center_z],
-          [cutout_center_x - finger_width/2, center_y + height/2, center_z]
-        )
-        
-        # Extrude the cutout
-        cutout_face.pushpull(depth)
-        
-        # Subtract the cutout from the board
-        entities.subtract(cutout_group.entities)
-        
-        # Clean up the temporary group
-        cutout_group.erase!
+
+      # Proper finger geometry: 2*num_fingers - 1 equal segments alternating
+      # finger / gap, so finger_width = width / (2 * num_fingers - 1). The
+      # legacy width/num_fingers formula left the joint asymmetric and made
+      # the last segment wider, which contributed to the duplicate-point
+      # geometry failures.
+      slot_width = width.to_f / (2 * num_fingers - 1)
+      cy_min = center_y - height / 2.0
+      cy_max = center_y + height / 2.0
+
+      # Build the finger block at top level (Solid Tools requires top-level
+      # groups; the legacy code built inside board.entities and called the
+      # non-existent Sketchup::Entities#subtract).
+      fingers_group = model.active_entities.add_group
+      base_face = fingers_group.entities.add_face(
+        [center_x - width/2, cy_min, center_z],
+        [center_x + width/2, cy_min, center_z],
+        [center_x + width/2, cy_max, center_z],
+        [center_x - width/2, cy_max, center_z]
+      )
+      base_face.pushpull(depth)
+
+      # Carve out gap slots at odd segment indices (1, 3, ...). num_fingers
+      # fingers leave (num_fingers - 1) gaps.
+      (num_fingers - 1).times do |i|
+        gap_center_x = center_x - width/2 + slot_width * (2 * i + 1) + slot_width / 2.0
+        cutout = finger_slot_group(model, gap_center_x, center_z, slot_width, height, depth, cy_min, cy_max)
+        fingers_group = solid_csg(fingers_group, cutout, :subtract)
       end
-      
-      # Return the result
-      { 
-        success: true, 
-        id: board.entityID
-      }
+
+      # Fuse the finger block into the board so the joint stays attached.
+      board = solid_csg(board, fingers_group, :union)
+
+      { success: true, id: board.entityID }
+    end
+
+    def create_board2_slots(board, width, height, depth, num_fingers, offset_x, offset_y, offset_z)
+      model = Sketchup.active_model
+      bounds = board.bounds
+
+      center_x = bounds.center.x + offset_x
+      center_y = bounds.center.y + offset_y
+      center_z = bounds.center.z + offset_z
+
+      slot_width = width.to_f / (2 * num_fingers - 1)
+      cy_min = center_y - height / 2.0
+      cy_max = center_y + height / 2.0
+
+      # Carve slots in the board at even segment indices (0, 2, ...) so they
+      # accept the fingers from board1.
+      num_fingers.times do |i|
+        slot_center_x = center_x - width/2 + slot_width * (2 * i) + slot_width / 2.0
+        cutout = finger_slot_group(model, slot_center_x, center_z, slot_width, height, depth, cy_min, cy_max)
+        board = solid_csg(board, cutout, :subtract)
+      end
+
+      { success: true, id: board.entityID }
     end
     
     def eval_ruby(params)

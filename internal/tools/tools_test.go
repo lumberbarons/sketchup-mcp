@@ -422,7 +422,7 @@ func TestToolForwardsExpectedArguments(t *testing.T) {
 			expectedRubyMethod: "create_finger_joint",
 			expectedRubyArgs: map[string]any{
 				"board1_id": "a", "board2_id": "b",
-				"width": 1.0, "height": 1.0, "depth": 1.0,
+				"width": 2.0, "height": 2.0, "depth": 1.0,
 				"num_fingers": 5,
 				"offset_x":    0.0, "offset_y": 0.0, "offset_z": 0.0,
 			},
