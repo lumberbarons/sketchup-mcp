@@ -608,16 +608,26 @@ func TestFindGroupsForwardsCombinedFilters(t *testing.T) {
 func TestFindGroupsForwardsTruncationLimit(t *testing.T) {
 	s := newSession(t)
 	_ = s.call(t, "find_groups", map[string]any{"limit": 5})
-	if !jsonEqual(s.fake.lastArguments(t)["limit"], 5) {
-		t.Fatalf("limit: %v", s.fake.lastArguments(t)["limit"])
+	want := map[string]any{
+		"limit":              5,
+		"include_components": false,
+		"recursive":          false,
+	}
+	if !jsonEqual(s.fake.lastArguments(t), want) {
+		t.Fatalf("args: %v", s.fake.lastArguments(t))
 	}
 }
 
 func TestFindGroupsForwardsIncludeComponents(t *testing.T) {
 	s := newSession(t)
 	_ = s.call(t, "find_groups", map[string]any{"include_components": true})
-	if s.fake.lastArguments(t)["include_components"] != true {
-		t.Fatalf("include_components: %v", s.fake.lastArguments(t)["include_components"])
+	want := map[string]any{
+		"limit":              200,
+		"include_components": true,
+		"recursive":          false,
+	}
+	if !jsonEqual(s.fake.lastArguments(t), want) {
+		t.Fatalf("args: %v", s.fake.lastArguments(t))
 	}
 }
 
@@ -752,8 +762,14 @@ func TestBooleanOpForwardsKeepOriginals(t *testing.T) {
 		"operation": "union", "target_id": 1, "tool_id": 2,
 		"delete_originals": false,
 	})
-	if s.fake.lastArguments(t)["delete_originals"] != false {
-		t.Fatalf("delete_originals: %v", s.fake.lastArguments(t)["delete_originals"])
+	want := map[string]any{
+		"operation":        "union",
+		"target_id":        1,
+		"tool_id":          2,
+		"delete_originals": false,
+	}
+	if !jsonEqual(s.fake.lastArguments(t), want) {
+		t.Fatalf("args: %v", s.fake.lastArguments(t))
 	}
 }
 
@@ -966,8 +982,16 @@ func TestCreateExtrusionXAxis(t *testing.T) {
 		"extrude_from": 0.0,
 		"extrude_to":   3.5,
 	})
-	mustHave(t, s.fake.lastArguments(t), "extrude_axis", "x")
-	mustHave(t, s.fake.lastArguments(t), "profile", rafterProfile)
+	want := map[string]any{
+		"name":         "Header A",
+		"profile":      rafterProfile,
+		"extrude_axis": "x",
+		"extrude_from": 0.0,
+		"extrude_to":   3.5,
+	}
+	if !jsonEqual(s.fake.lastArguments(t), want) {
+		t.Fatalf("args: %v", s.fake.lastArguments(t))
+	}
 }
 
 func TestCreateExtrusionZAxis(t *testing.T) {
@@ -979,7 +1003,16 @@ func TestCreateExtrusionZAxis(t *testing.T) {
 		"extrude_from": 0.0,
 		"extrude_to":   96.0,
 	})
-	mustHave(t, s.fake.lastArguments(t), "extrude_axis", "z")
+	want := map[string]any{
+		"name":         "Post 1",
+		"profile":      rafterProfile,
+		"extrude_axis": "z",
+		"extrude_from": 0.0,
+		"extrude_to":   96.0,
+	}
+	if !jsonEqual(s.fake.lastArguments(t), want) {
+		t.Fatalf("args: %v", s.fake.lastArguments(t))
+	}
 }
 
 func TestCreateExtrusionReverseDirection(t *testing.T) {
@@ -1144,8 +1177,13 @@ func TestReplaceGeometryForwardsRecursiveFalse(t *testing.T) {
 	_ = s.call(t, "replace_geometry", map[string]any{
 		"id": "5", "geometry": geometry, "recursive": false,
 	})
-	if s.fake.lastArguments(t)["recursive"] != false {
-		t.Fatalf("recursive: %v", s.fake.lastArguments(t)["recursive"])
+	want := map[string]any{
+		"id":        "5",
+		"geometry":  geometry,
+		"recursive": false,
+	}
+	if !jsonEqual(s.fake.lastArguments(t), want) {
+		t.Fatalf("args: %v", s.fake.lastArguments(t))
 	}
 }
 
@@ -1239,12 +1277,17 @@ func TestBatchCreateForwardsMixedOps(t *testing.T) {
 
 func TestBatchCreateDefaultsTransactionName(t *testing.T) {
 	s := newSession(t)
-	_ = s.call(t, "batch_create", map[string]any{
-		"operations": []map[string]any{
-			{"op": "sphere", "name": "Ball", "position": []float64{0, 0, 0}, "radius": 1},
-		},
-	})
-	mustHave(t, s.fake.lastArguments(t), "transaction_name", "MCP batch")
+	ops := []map[string]any{
+		{"op": "sphere", "name": "Ball", "position": []float64{0, 0, 0}, "radius": 1},
+	}
+	_ = s.call(t, "batch_create", map[string]any{"operations": ops})
+	want := map[string]any{
+		"transaction_name": "MCP batch",
+		"operations":       ops,
+	}
+	if !jsonEqual(s.fake.lastArguments(t), want) {
+		t.Fatalf("args: %v", s.fake.lastArguments(t))
+	}
 }
 
 func TestBatchCreateNameBasedMutatesRoundTrip(t *testing.T) {
@@ -1254,17 +1297,12 @@ func TestBatchCreateNameBasedMutatesRoundTrip(t *testing.T) {
 		{"op": "delete", "id_or_name": "Old Rafter"},
 	}
 	_ = s.call(t, "batch_create", map[string]any{"operations": ops})
-	forwarded, _ := s.fake.lastArguments(t)["operations"].([]any)
-	if len(forwarded) != 2 {
-		t.Fatalf("ops: %v", forwarded)
+	want := map[string]any{
+		"transaction_name": "MCP batch",
+		"operations":       ops,
 	}
-	op0 := forwarded[0].(map[string]any)
-	op1 := forwarded[1].(map[string]any)
-	if op0["id_or_name"] != "Rafter W 5" {
-		t.Fatalf("op0 id_or_name: %v (type %T)", op0["id_or_name"], op0["id_or_name"])
-	}
-	if op1["id_or_name"] != "Old Rafter" {
-		t.Fatalf("op1 id_or_name: %v", op1["id_or_name"])
+	if !jsonEqual(s.fake.lastArguments(t), want) {
+		t.Fatalf("args: %v", s.fake.lastArguments(t))
 	}
 }
 
