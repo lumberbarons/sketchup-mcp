@@ -1494,8 +1494,14 @@ module SU_MCP
       unless target.respond_to?(operation)
         raise "Solid Tools #{operation} unavailable — requires SketchUp Pro"
       end
-      unless target.respond_to?(:manifold?) && target.manifold? && tool.manifold?
-        raise "Solid Tools #{operation} requires manifold solids — check inputs with Sketchup::Group#manifold?"
+      unless target.respond_to?(:manifold?)
+        raise "Solid Tools #{operation} requires Sketchup::Group inputs that respond to #manifold?"
+      end
+      bad = []
+      bad << "target" unless target.manifold?
+      bad << "tool" unless tool.manifold?
+      unless bad.empty?
+        raise "Solid Tools #{operation} requires manifold solids — non-manifold operand(s): #{bad.join(', ')}"
       end
       result = target.send(operation, tool)
       raise "Solid Tools #{operation} returned nil — inputs must be manifold solids" if result.nil?
@@ -1965,6 +1971,14 @@ module SU_MCP
           mortise_face.pushpull(face_direction == :top ? -depth : depth)
         end
 
+        # Assert the scratch group is a closed solid before handing it to
+        # Solid Tools — a non-manifold scratch group is a build-side bug and
+        # should surface here with the face_direction context, not as a
+        # generic "non-manifold" error from solid_csg below.
+        if mortise_group.respond_to?(:manifold?) && !mortise_group.manifold?
+          raise "create_mortise built a non-manifold scratch group for face_direction=#{face_direction} — check pushpull direction and face winding"
+        end
+
         # Subtract via SU Pro Solid Tools. Both operands are consumed and
         # `result` is a new top-level Group that replaces `board`.
         result = solid_csg(board, mortise_group, :subtract)
@@ -1979,18 +1993,20 @@ module SU_MCP
 
     def create_tenon(board, width, height, depth, face_direction, bounds, offset_x, offset_y, offset_z)
       model = Sketchup.active_model
-      
-      # Get the board's entities
-      entities = board.is_a?(Sketchup::Group) ? board.entities : board.definition.entities
-      
+
       # Calculate the position of the tenon based on the face direction
       tenon_position = calculate_position_on_face(face_direction, bounds, width, height, depth, offset_x, offset_y, offset_z)
-      
+
       log "Creating tenon at position: #{tenon_position.inspect} with dimensions: #{[width, height, depth].inspect}"
-      
-      # Create a box for the tenon
+
+      # Build the tenon as a top-level solid group so Solid Tools can union
+      # it with the board. The legacy implementation built the tenon, then
+      # called board_entities.add_instance(tenon_group.entities.parent, ...)
+      # which doesn't perform a Solid Tools union — it just nests the parent
+      # ComponentDefinition, leaving a dangling reference after tenon_group.erase!
+      # and triggering "reference to deleted Entity" downstream.
       tenon_group = model.active_entities.add_group
-      
+
       # Create the tenon box with the correct orientation
       case face_direction
       when :east, :west
@@ -2021,25 +2037,20 @@ module SU_MCP
         )
         tenon_face.pushpull(face_direction == :top ? depth : -depth)
       end
-      
-      # Get the transformation of the board
-      board_transform = board.transformation
-      
-      # Apply the inverse transformation to the tenon group
-      tenon_group.transform!(board_transform.inverse)
-      
-      # Union the tenon with the board
-      board_entities = board.is_a?(Sketchup::Group) ? board.entities : board.definition.entities
-      board_entities.add_instance(tenon_group.entities.parent, Geom::Transformation.new)
-      
-      # Clean up the temporary group
-      tenon_group.erase!
-      
-      # Return the result
-      { 
-        success: true, 
-        id: board.entityID
-      }
+
+      # Assert the scratch group is a closed solid before handing it to
+      # Solid Tools — a non-manifold scratch group is a build-side bug and
+      # should surface here, not as a generic "non-manifold" error from
+      # solid_csg below.
+      if tenon_group.respond_to?(:manifold?) && !tenon_group.manifold?
+        raise "create_tenon built a non-manifold scratch group for face_direction=#{face_direction} — check pushpull direction and face winding"
+      end
+
+      # Fuse the tenon into the board via Solid Tools. solid_csg consumes
+      # both operands and returns the new manifold board group.
+      result = solid_csg(board, tenon_group, :union)
+
+      { success: true, id: result.entityID }
     end
     
     def calculate_position_on_face(face_direction, bounds, width, height, depth, offset_x, offset_y, offset_z)

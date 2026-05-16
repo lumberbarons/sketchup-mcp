@@ -54,6 +54,9 @@ class TestSolidCsg < Minitest::Test
       @server.send(:solid_csg, target, FakeGroup.new, :subtract)
     end
     assert_match(/manifold/, err.message)
+    # Error must name which side failed (sch-zwk) — bare "non-manifold" without
+    # the side label sent debuggers chasing both operands.
+    assert_match(/target/, err.message)
   end
 
   def test_rejects_non_manifold_tool
@@ -61,6 +64,17 @@ class TestSolidCsg < Minitest::Test
       @server.send(:solid_csg, FakeGroup.new, FakeGroup.new(manifold: false), :subtract)
     end
     assert_match(/manifold/, err.message)
+    assert_match(/tool/, err.message)
+  end
+
+  def test_names_both_sides_when_both_non_manifold
+    bad_target = FakeGroup.new(manifold: false)
+    bad_tool = FakeGroup.new(manifold: false)
+    err = assert_raises(RuntimeError) do
+      @server.send(:solid_csg, bad_target, bad_tool, :subtract)
+    end
+    assert_match(/target/, err.message)
+    assert_match(/tool/, err.message)
   end
 
   def test_raises_when_solid_tools_returns_nil
