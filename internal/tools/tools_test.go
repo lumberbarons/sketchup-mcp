@@ -437,7 +437,7 @@ func TestToolForwardsExpectedArguments(t *testing.T) {
 			toolName:           "find_groups",
 			mcpArgs:            map[string]any{},
 			expectedRubyMethod: "find_groups",
-			expectedRubyArgs:   map[string]any{"limit": 200, "include_components": false},
+			expectedRubyArgs:   map[string]any{"limit": 200, "include_components": false, "recursive": false},
 		},
 	}
 
@@ -501,6 +501,7 @@ func TestFindGroupsForwardsNamePrefix(t *testing.T) {
 		"name_prefix":        "WA ",
 		"limit":              200,
 		"include_components": false,
+		"recursive":          false,
 	}
 	if !jsonEqual(s.fake.lastArguments(t), want) {
 		t.Fatalf("args: %v", s.fake.lastArguments(t))
@@ -515,6 +516,7 @@ func TestFindGroupsForwardsNamePattern(t *testing.T) {
 		"name_pattern":       pattern,
 		"limit":              200,
 		"include_components": false,
+		"recursive":          false,
 	}
 	if !jsonEqual(s.fake.lastArguments(t), want) {
 		t.Fatalf("args: %v", s.fake.lastArguments(t))
@@ -536,6 +538,7 @@ func TestFindGroupsForwardsInBoundsPositive(t *testing.T) {
 		},
 		"limit":              200,
 		"include_components": false,
+		"recursive":          false,
 	}
 	if !jsonEqual(s.fake.lastArguments(t), want) {
 		t.Fatalf("args: %v", s.fake.lastArguments(t))
@@ -579,6 +582,7 @@ func TestFindGroupsForwardsCombinedFilters(t *testing.T) {
 		"parent_id":          42,
 		"limit":              10,
 		"include_components": true,
+		"recursive":          false,
 	}
 	if !jsonEqual(s.fake.lastArguments(t), want) {
 		t.Fatalf("args: %v", s.fake.lastArguments(t))
@@ -601,11 +605,19 @@ func TestFindGroupsForwardsIncludeComponents(t *testing.T) {
 	}
 }
 
+func TestFindGroupsForwardsRecursive(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "find_groups", map[string]any{"recursive": true})
+	if s.fake.lastArguments(t)["recursive"] != true {
+		t.Fatalf("recursive: %v", s.fake.lastArguments(t)["recursive"])
+	}
+}
+
 func TestFindGroupsOmitsUnsetFilters(t *testing.T) {
 	s := newSession(t)
 	_ = s.call(t, "find_groups", map[string]any{})
 	args := s.fake.lastArguments(t)
-	want := map[string]any{"limit": 200, "include_components": false}
+	want := map[string]any{"limit": 200, "include_components": false, "recursive": false}
 	if !jsonEqual(args, want) {
 		t.Fatalf("args: %v", args)
 	}

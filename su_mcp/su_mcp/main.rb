@@ -1018,13 +1018,15 @@ module SU_MCP
       in_bounds = params["in_bounds"]
       limit = (params["limit"] || 200).to_i
       include_components = params["include_components"] ? true : false
+      recursive = params["recursive"] ? true : false
 
       model = Sketchup.active_model
       entities = resolve_search_root(model, params["parent_id"])
 
       matched = []
       truncated = false
-      entities.each do |entity|
+      walker = recursive ? walk_entities_recursive(entities) : entities.each
+      walker.each do |entity|
         next unless entity_matches_kind?(entity, include_components)
         next unless name_matches?(entity.name, prefix, pattern)
         next unless bounds_matches?(entity.bounds, in_bounds)
@@ -1037,6 +1039,24 @@ module SU_MCP
       end
 
       { success: true, groups: matched, truncated: truncated }
+    end
+
+    # Yields every entity reachable from `entities`, descending into nested
+    # Groups (and ComponentInstance definitions). Order is depth-first so
+    # parents are visited before children — matters only for limit truncation.
+    def walk_entities_recursive(entities)
+      Enumerator.new do |y|
+        stack = entities.to_a.reverse
+        until stack.empty?
+          e = stack.pop
+          y << e
+          if e.is_a?(Sketchup::Group)
+            e.entities.to_a.reverse.each { |child| stack.push(child) }
+          elsif e.is_a?(Sketchup::ComponentInstance) && e.respond_to?(:definition)
+            e.definition.entities.to_a.reverse.each { |child| stack.push(child) }
+          end
+        end
+      end
     end
 
     def resolve_search_root(model, parent_id)

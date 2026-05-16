@@ -80,6 +80,7 @@ type FindGroupsInput struct {
 	ParentID          *int64               `json:"parent_id,omitempty"`
 	Limit             *int                 `json:"limit,omitempty"`
 	IncludeComponents *bool                `json:"include_components,omitempty"`
+	Recursive         *bool                `json:"recursive,omitempty"`
 }
 
 // GetSelectionInput is the (empty) input for the get_selection tool.

@@ -202,6 +202,9 @@ module FindGroupsTestSupport
     end
     def layer; nil; end
     def material; nil; end
+    # Empty by default so the recursive walker can call `.entities` on
+    # leaf groups without blowing up; FakeNestedGroup overrides.
+    def entities; []; end
   end
 
   # TestServer subclass that bypasses resolve_search_root so find_groups can
@@ -216,6 +219,8 @@ end
 
 class TestFindGroupsOrchestration < Minitest::Test
   include FindGroupsTestSupport
+
+  def make_bounds(*args); FindGroupsTestSupport.make_bounds(*args); end
 
   def setup
     @server = FindGroupsTestServer.new
@@ -253,6 +258,89 @@ class TestFindGroupsOrchestration < Minitest::Test
     result = @server.send(:find_groups, {})
     assert_equal 200, result[:groups].length
     assert_equal true, result[:truncated]
+  end
+
+  # -- regression: each filter mode returns non-empty matches when groups exist ---
+  # The bug (sch-owl) reported that name_prefix / name_pattern / in_bounds all
+  # returned [] in a populated model where matching groups clearly existed.
+  # These tests drive the full filter loop against fixture groups to pin each
+  # mode end-to-end — not just the per-predicate helpers.
+
+  def test_name_prefix_returns_matching_groups
+    @server.fake_entities = [
+      FakeFGFullGroup.new("smoke_extrusion", 101),
+      FakeFGFullGroup.new("smoke_b1", 102),
+      FakeFGFullGroup.new("smoke_b2", 103),
+      FakeFGFullGroup.new("other", 999),
+    ]
+    result = @server.send(:find_groups, "name_prefix" => "smoke")
+    names = result[:groups].map { |g| g[:name] }
+    assert_equal %w[smoke_extrusion smoke_b1 smoke_b2], names
+    assert_equal false, result[:truncated]
+  end
+
+  def test_name_pattern_returns_matching_groups
+    @server.fake_entities = [
+      FakeFGFullGroup.new("smoke_extrusion", 101),
+      FakeFGFullGroup.new("smoke_b1", 102),
+      FakeFGFullGroup.new("smoke_b2", 103),
+      FakeFGFullGroup.new("other", 999),
+    ]
+    result = @server.send(:find_groups, "name_pattern" => "smoke.*")
+    names = result[:groups].map { |g| g[:name] }.sort
+    assert_equal %w[smoke_b1 smoke_b2 smoke_extrusion], names
+  end
+
+  def test_in_bounds_returns_matching_groups
+    @server.fake_entities = [
+      FakeFGFullGroup.new("smoke_b1", 102, make_bounds([1040, 0, 0], [1057, 6, 30])),
+      FakeFGFullGroup.new("far_away", 999, make_bounds([0, 0, 0], [10, 10, 10])),
+    ]
+    result = @server.send(:find_groups,
+      "in_bounds" => { "min" => [1000, -1, -1], "max" => [1100, 10, 30] })
+    names = result[:groups].map { |g| g[:name] }
+    assert_equal ["smoke_b1"], names
+  end
+
+  # Fixture for nested-group tests: a Group whose .entities returns a
+  # provided list (mimics Sketchup::Group#entities for the recursive walker).
+  class FakeNestedGroup < FakeFGFullGroup
+    def initialize(name, id, children, bounds = nil)
+      super(name, id, bounds)
+      @children = children
+    end
+    def entities; @children; end
+  end
+
+  def test_recursive_finds_nested_groups
+    inner1 = FakeFGFullGroup.new("smoke_b1", 102)
+    inner2 = FakeFGFullGroup.new("smoke_b2", 103)
+    parent = FakeNestedGroup.new("Container", 1, [inner1, inner2])
+    @server.fake_entities = [parent]
+
+    # Non-recursive: only the parent is scanned; smoke_* groups are missed.
+    non_rec = @server.send(:find_groups, "name_prefix" => "smoke")
+    assert_equal [], non_rec[:groups].map { |g| g[:name] }
+
+    # Recursive: descends into parent.entities, finds both smoke_* groups.
+    rec = @server.send(:find_groups, "name_prefix" => "smoke", "recursive" => true)
+    assert_equal %w[smoke_b1 smoke_b2], rec[:groups].map { |g| g[:name] }.sort
+  end
+
+  def test_each_match_has_full_descriptor
+    @server.fake_entities = [
+      FakeFGFullGroup.new("smoke_b1", 102, make_bounds([1040, 0, 0], [1057, 6, 30])),
+    ]
+    result = @server.send(:find_groups, "name_prefix" => "smoke")
+    match = result[:groups].first
+    assert_equal 102, match[:id]
+    assert_equal "smoke_b1", match[:name]
+    assert_equal [1040.0, 0.0, 0.0], match[:bounds][:min]
+    assert_equal [1057.0, 6.0, 30.0], match[:bounds][:max]
+    # layer and material are nullable in the fixture but the keys must exist
+    # so consumers can rely on the descriptor shape.
+    assert match.key?(:layer)
+    assert match.key?(:material)
   end
 
   def test_include_components_truthiness_coercion

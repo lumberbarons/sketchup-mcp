@@ -327,7 +327,12 @@ func registerFindGroups(srv *mcp.Server, s Sender) {
 		Description: `Query existing groups in the active model.
 
 All filters combine with AND. Each match: {id, name, bounds, layer,
-material}. truncated is true if the limit cap was hit.`,
+material}. truncated is true if the limit cap was hit.
+
+By default only entities directly under the search root are scanned;
+pass recursive=true to also descend into nested Groups and (when
+include_components=true) ComponentInstance definitions — useful when
+named groups live inside other groups rather than at the top level.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in FindGroupsInput) (*mcp.CallToolResult, any, error) {
 		limit := 200
 		if in.Limit != nil {
@@ -337,7 +342,15 @@ material}. truncated is true if the limit cap was hit.`,
 		if in.IncludeComponents != nil {
 			includeComponents = *in.IncludeComponents
 		}
-		args := map[string]any{"limit": limit, "include_components": includeComponents}
+		recursive := false
+		if in.Recursive != nil {
+			recursive = *in.Recursive
+		}
+		args := map[string]any{
+			"limit":              limit,
+			"include_components": includeComponents,
+			"recursive":          recursive,
+		}
 		if in.NamePrefix != nil {
 			args["name_prefix"] = *in.NamePrefix
 		}
