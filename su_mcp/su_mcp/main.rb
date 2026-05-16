@@ -1810,87 +1810,98 @@ module SU_MCP
     def create_mortise_tenon(params)
       log "Creating mortise and tenon joint with params: #{params.inspect}"
       model = Sketchup.active_model
-      
-      # Get the mortise and tenon board IDs
-      mortise_id = params["mortise_id"].to_s.gsub('"', '')
-      tenon_id = params["tenon_id"].to_s.gsub('"', '')
-      
-      log "Looking for mortise board with ID: #{mortise_id}"
-      mortise_board = model.find_entity_by_id(mortise_id.to_i)
-      
-      log "Looking for tenon board with ID: #{tenon_id}"
-      tenon_board = model.find_entity_by_id(tenon_id.to_i)
-      
-      unless mortise_board && tenon_board
-        missing = []
-        missing << "mortise board" unless mortise_board
-        missing << "tenon board" unless tenon_board
-        raise "Entity not found: #{missing.join(', ')}"
+
+      # Wrap the entire handler in a SketchUp operation so any orphan Groups
+      # added before a failure (e.g. the mortise/tenon scratch groups created
+      # inside the Solid Tools helpers) are rolled back by abort_operation.
+      model.start_operation("MortiseTenon", true)
+      begin
+        # Get the mortise and tenon board IDs
+        mortise_id = params["mortise_id"].to_s.gsub('"', '')
+        tenon_id = params["tenon_id"].to_s.gsub('"', '')
+
+        log "Looking for mortise board with ID: #{mortise_id}"
+        mortise_board = model.find_entity_by_id(mortise_id.to_i)
+
+        log "Looking for tenon board with ID: #{tenon_id}"
+        tenon_board = model.find_entity_by_id(tenon_id.to_i)
+
+        unless mortise_board && tenon_board
+          missing = []
+          missing << "mortise board" unless mortise_board
+          missing << "tenon board" unless tenon_board
+          raise "Entity not found: #{missing.join(', ')}"
+        end
+
+        # Ensure both entities are groups or component instances
+        unless (mortise_board.is_a?(Sketchup::Group) || mortise_board.is_a?(Sketchup::ComponentInstance)) &&
+               (tenon_board.is_a?(Sketchup::Group) || tenon_board.is_a?(Sketchup::ComponentInstance))
+          raise "Mortise and tenon operation requires groups or component instances"
+        end
+
+        # Get joint parameters
+        width = params["width"] || 1.0
+        height = params["height"] || 1.0
+        depth = params["depth"] || 1.0
+        offset_x = params["offset_x"] || 0.0
+        offset_y = params["offset_y"] || 0.0
+        offset_z = params["offset_z"] || 0.0
+
+        # Get the bounds of both boards
+        mortise_bounds = mortise_board.bounds
+        tenon_bounds = tenon_board.bounds
+
+        # Determine the face to place the joint on based on the relative positions of the boards
+        mortise_center = mortise_bounds.center
+        tenon_center = tenon_bounds.center
+
+        # Calculate the direction vector from mortise to tenon
+        direction_vector = tenon_center - mortise_center
+
+        # Determine which face of the mortise board is closest to the tenon board
+        mortise_face_direction = determine_closest_face(direction_vector)
+
+        # Create the mortise (hole) in the mortise board
+        mortise_result = create_mortise(
+          mortise_board,
+          width,
+          height,
+          depth,
+          mortise_face_direction,
+          mortise_bounds,
+          offset_x,
+          offset_y,
+          offset_z
+        )
+
+        # Determine which face of the tenon board is closest to the mortise board
+        tenon_face_direction = determine_closest_face(direction_vector.reverse)
+
+        # Create the tenon (projection) on the tenon board
+        tenon_result = create_tenon(
+          tenon_board,
+          width,
+          height,
+          depth,
+          tenon_face_direction,
+          tenon_bounds,
+          offset_x,
+          offset_y,
+          offset_z
+        )
+
+        model.commit_operation
+
+        # Return the result
+        {
+          success: true,
+          mortise_id: mortise_result[:id],
+          tenon_id: tenon_result[:id]
+        }
+      rescue StandardError
+        model.abort_operation
+        raise
       end
-      
-      # Ensure both entities are groups or component instances
-      unless (mortise_board.is_a?(Sketchup::Group) || mortise_board.is_a?(Sketchup::ComponentInstance)) &&
-             (tenon_board.is_a?(Sketchup::Group) || tenon_board.is_a?(Sketchup::ComponentInstance))
-        raise "Mortise and tenon operation requires groups or component instances"
-      end
-      
-      # Get joint parameters
-      width = params["width"] || 1.0
-      height = params["height"] || 1.0
-      depth = params["depth"] || 1.0
-      offset_x = params["offset_x"] || 0.0
-      offset_y = params["offset_y"] || 0.0
-      offset_z = params["offset_z"] || 0.0
-      
-      # Get the bounds of both boards
-      mortise_bounds = mortise_board.bounds
-      tenon_bounds = tenon_board.bounds
-      
-      # Determine the face to place the joint on based on the relative positions of the boards
-      mortise_center = mortise_bounds.center
-      tenon_center = tenon_bounds.center
-      
-      # Calculate the direction vector from mortise to tenon
-      direction_vector = tenon_center - mortise_center
-      
-      # Determine which face of the mortise board is closest to the tenon board
-      mortise_face_direction = determine_closest_face(direction_vector)
-      
-      # Create the mortise (hole) in the mortise board
-      mortise_result = create_mortise(
-        mortise_board, 
-        width, 
-        height, 
-        depth, 
-        mortise_face_direction,
-        mortise_bounds,
-        offset_x, 
-        offset_y, 
-        offset_z
-      )
-      
-      # Determine which face of the tenon board is closest to the mortise board
-      tenon_face_direction = determine_closest_face(direction_vector.reverse)
-      
-      # Create the tenon (projection) on the tenon board
-      tenon_result = create_tenon(
-        tenon_board, 
-        width, 
-        height, 
-        depth, 
-        tenon_face_direction,
-        tenon_bounds,
-        offset_x, 
-        offset_y, 
-        offset_z
-      )
-      
-      # Return the result
-      { 
-        success: true, 
-        mortise_id: mortise_result[:id],
-        tenon_id: tenon_result[:id]
-      }
     end
     
     def determine_closest_face(direction_vector)
@@ -2085,58 +2096,69 @@ module SU_MCP
       log "Creating dovetail joint with params: #{params.inspect}"
       model = Sketchup.active_model
 
-      # Get the tail and pin board IDs
-      tail_id = params["tail_id"].to_s.gsub('"', '')
-      pin_id = params["pin_id"].to_s.gsub('"', '')
+      # Wrap the entire handler in a SketchUp operation so any orphan scratch
+      # Groups created before a failure (tails group, pin block, per-tail
+      # cutouts) are rolled back by abort_operation.
+      model.start_operation("Dovetail", true)
+      begin
+        # Get the tail and pin board IDs
+        tail_id = params["tail_id"].to_s.gsub('"', '')
+        pin_id = params["pin_id"].to_s.gsub('"', '')
 
-      log "Looking for tail board with ID: #{tail_id}"
-      tail_board = model.find_entity_by_id(tail_id.to_i)
+        log "Looking for tail board with ID: #{tail_id}"
+        tail_board = model.find_entity_by_id(tail_id.to_i)
 
-      log "Looking for pin board with ID: #{pin_id}"
-      pin_board = model.find_entity_by_id(pin_id.to_i)
+        log "Looking for pin board with ID: #{pin_id}"
+        pin_board = model.find_entity_by_id(pin_id.to_i)
 
-      unless tail_board && pin_board
-        missing = []
-        missing << "tail board" unless tail_board
-        missing << "pin board" unless pin_board
-        raise "Entity not found: #{missing.join(', ')}"
+        unless tail_board && pin_board
+          missing = []
+          missing << "tail board" unless tail_board
+          missing << "pin board" unless pin_board
+          raise "Entity not found: #{missing.join(', ')}"
+        end
+
+        # Ensure both entities are groups or component instances
+        unless (tail_board.is_a?(Sketchup::Group) || tail_board.is_a?(Sketchup::ComponentInstance)) &&
+               (pin_board.is_a?(Sketchup::Group) || pin_board.is_a?(Sketchup::ComponentInstance))
+          raise "Dovetail operation requires groups or component instances"
+        end
+
+        # Get joint parameters. Defaults match the Go handler's: a width/depth
+        # combo where adjacent tail bottoms don't overlap with the default
+        # angle/num_tails — see validate_dovetail_geometry!.
+        width = params["width"] || 2.0
+        height = params["height"] || 2.0
+        depth = params["depth"] || 0.25
+        angle = params["angle"] || 15.0  # Dovetail angle in degrees
+        num_tails = (params["num_tails"] || 3).to_i
+        offset_x = params["offset_x"] || 0.0
+        offset_y = params["offset_y"] || 0.0
+        offset_z = params["offset_z"] || 0.0
+
+        # Validate dovetail geometry up-front so failures surface as readable
+        # messages rather than SketchUp's cryptic 'Duplicate points in array'
+        # when add_face is handed a degenerate trapezoid.
+        validate_dovetail_geometry!(width, height, depth, angle, num_tails)
+
+        # Create the tails on the tail board
+        tail_result = create_tails(tail_board, width, height, depth, angle, num_tails, offset_x, offset_y, offset_z)
+
+        # Create the pins on the pin board
+        pin_result = create_pins(pin_board, width, height, depth, angle, num_tails, offset_x, offset_y, offset_z)
+
+        model.commit_operation
+
+        # Return the result
+        {
+          success: true,
+          tail_id: tail_result[:id],
+          pin_id: pin_result[:id]
+        }
+      rescue StandardError
+        model.abort_operation
+        raise
       end
-
-      # Ensure both entities are groups or component instances
-      unless (tail_board.is_a?(Sketchup::Group) || tail_board.is_a?(Sketchup::ComponentInstance)) &&
-             (pin_board.is_a?(Sketchup::Group) || pin_board.is_a?(Sketchup::ComponentInstance))
-        raise "Dovetail operation requires groups or component instances"
-      end
-
-      # Get joint parameters. Defaults match the Go handler's: a width/depth
-      # combo where adjacent tail bottoms don't overlap with the default
-      # angle/num_tails — see validate_dovetail_geometry!.
-      width = params["width"] || 2.0
-      height = params["height"] || 2.0
-      depth = params["depth"] || 0.25
-      angle = params["angle"] || 15.0  # Dovetail angle in degrees
-      num_tails = (params["num_tails"] || 3).to_i
-      offset_x = params["offset_x"] || 0.0
-      offset_y = params["offset_y"] || 0.0
-      offset_z = params["offset_z"] || 0.0
-
-      # Validate dovetail geometry up-front so failures surface as readable
-      # messages rather than SketchUp's cryptic 'Duplicate points in array'
-      # when add_face is handed a degenerate trapezoid.
-      validate_dovetail_geometry!(width, height, depth, angle, num_tails)
-
-      # Create the tails on the tail board
-      tail_result = create_tails(tail_board, width, height, depth, angle, num_tails, offset_x, offset_y, offset_z)
-      
-      # Create the pins on the pin board
-      pin_result = create_pins(pin_board, width, height, depth, angle, num_tails, offset_x, offset_y, offset_z)
-      
-      # Return the result
-      { 
-        success: true, 
-        tail_id: tail_result[:id],
-        pin_id: pin_result[:id]
-      }
     end
     
     # Pure: validate dovetail geometry before any add_face. Catches the
@@ -2304,54 +2326,65 @@ module SU_MCP
       log "Creating finger joint with params: #{params.inspect}"
       model = Sketchup.active_model
 
-      # Get the two board IDs
-      board1_id = params["board1_id"].to_s.gsub('"', '')
-      board2_id = params["board2_id"].to_s.gsub('"', '')
+      # Wrap the entire handler in a SketchUp operation so any orphan scratch
+      # Groups created before a failure (finger block, per-slot cutouts) are
+      # rolled back by abort_operation.
+      model.start_operation("FingerJoint", true)
+      begin
+        # Get the two board IDs
+        board1_id = params["board1_id"].to_s.gsub('"', '')
+        board2_id = params["board2_id"].to_s.gsub('"', '')
 
-      log "Looking for board 1 with ID: #{board1_id}"
-      board1 = model.find_entity_by_id(board1_id.to_i)
+        log "Looking for board 1 with ID: #{board1_id}"
+        board1 = model.find_entity_by_id(board1_id.to_i)
 
-      log "Looking for board 2 with ID: #{board2_id}"
-      board2 = model.find_entity_by_id(board2_id.to_i)
+        log "Looking for board 2 with ID: #{board2_id}"
+        board2 = model.find_entity_by_id(board2_id.to_i)
 
-      unless board1 && board2
-        missing = []
-        missing << "board 1" unless board1
-        missing << "board 2" unless board2
-        raise "Entity not found: #{missing.join(', ')}"
+        unless board1 && board2
+          missing = []
+          missing << "board 1" unless board1
+          missing << "board 2" unless board2
+          raise "Entity not found: #{missing.join(', ')}"
+        end
+
+        # Ensure both entities are groups or component instances
+        unless (board1.is_a?(Sketchup::Group) || board1.is_a?(Sketchup::ComponentInstance)) &&
+               (board2.is_a?(Sketchup::Group) || board2.is_a?(Sketchup::ComponentInstance))
+          raise "Finger joint operation requires groups or component instances"
+        end
+
+        # Get joint parameters
+        width = params["width"] || 2.0
+        height = params["height"] || 2.0
+        depth = params["depth"] || 1.0
+        num_fingers = (params["num_fingers"] || 5).to_i
+        offset_x = params["offset_x"] || 0.0
+        offset_y = params["offset_y"] || 0.0
+        offset_z = params["offset_z"] || 0.0
+
+        # Validate up-front so degenerate params produce a readable error
+        # rather than SketchUp's 'Duplicate points in array'.
+        validate_finger_joint_geometry!(width, height, depth, num_fingers)
+
+        # Create the fingers on board 1
+        board1_result = create_board1_fingers(board1, width, height, depth, num_fingers, offset_x, offset_y, offset_z)
+
+        # Create the matching slots on board 2
+        board2_result = create_board2_slots(board2, width, height, depth, num_fingers, offset_x, offset_y, offset_z)
+
+        model.commit_operation
+
+        # Return the result
+        {
+          success: true,
+          board1_id: board1_result[:id],
+          board2_id: board2_result[:id]
+        }
+      rescue StandardError
+        model.abort_operation
+        raise
       end
-
-      # Ensure both entities are groups or component instances
-      unless (board1.is_a?(Sketchup::Group) || board1.is_a?(Sketchup::ComponentInstance)) &&
-             (board2.is_a?(Sketchup::Group) || board2.is_a?(Sketchup::ComponentInstance))
-        raise "Finger joint operation requires groups or component instances"
-      end
-
-      # Get joint parameters
-      width = params["width"] || 2.0
-      height = params["height"] || 2.0
-      depth = params["depth"] || 1.0
-      num_fingers = (params["num_fingers"] || 5).to_i
-      offset_x = params["offset_x"] || 0.0
-      offset_y = params["offset_y"] || 0.0
-      offset_z = params["offset_z"] || 0.0
-
-      # Validate up-front so degenerate params produce a readable error
-      # rather than SketchUp's 'Duplicate points in array'.
-      validate_finger_joint_geometry!(width, height, depth, num_fingers)
-
-      # Create the fingers on board 1
-      board1_result = create_board1_fingers(board1, width, height, depth, num_fingers, offset_x, offset_y, offset_z)
-
-      # Create the matching slots on board 2
-      board2_result = create_board2_slots(board2, width, height, depth, num_fingers, offset_x, offset_y, offset_z)
-
-      # Return the result
-      {
-        success: true,
-        board1_id: board1_result[:id],
-        board2_id: board2_result[:id]
-      }
     end
 
     # Pure: catch parameter combos that would produce degenerate finger
