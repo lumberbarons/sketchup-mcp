@@ -54,7 +54,56 @@ func callSketchup(s Sender, rubyTool string, args any) (*mcp.CallToolResult, any
 		slog.Error("tool failed", "tool", rubyTool, "err", err)
 		return textResult(failureEnvelope(err.Error())), nil, nil
 	}
-	return textResult(successEnvelope(result)), nil, nil
+	return textResult(successEnvelope(slimMCPFrame(result))), nil, nil
+}
+
+// mcpFrameKeys are the wrapper fields the Ruby server adds to every
+// successful tool response. callers don't need them — the structured
+// payload lives in the "extras" merged alongside.
+var mcpFrameKeys = map[string]bool{
+	"content": true, "isError": true, "success": true, "resourceId": true,
+}
+
+// slimMCPFrame strips the Ruby server's MCP-frame wrapper from a tool
+// result, returning just the structured payload the caller actually
+// cares about. The Ruby side returns
+//
+//	{content: [{type: text, text: ...}], isError, success, resourceId, ...extras}
+//
+// where `extras` is the handler-specific payload (bounds, groups, entities,
+// path, faces, ...). We promote `resourceId` to `id` for symmetry with the
+// rest of the API, then return just the extras. When there are no extras,
+// fall back to the content text so simple tools (eval_ruby) still work.
+func slimMCPFrame(result any) any {
+	m, ok := result.(map[string]any)
+	if !ok {
+		return result
+	}
+	_, hasContent := m["content"]
+	_, hasSuccess := m["success"]
+	if !hasContent || !hasSuccess {
+		return result
+	}
+	extras := map[string]any{}
+	for k, v := range m {
+		if !mcpFrameKeys[k] {
+			extras[k] = v
+		}
+	}
+	if rid, ok := m["resourceId"]; ok && rid != nil {
+		extras["id"] = rid
+	}
+	if len(extras) > 0 {
+		return extras
+	}
+	if content, ok := m["content"].([]any); ok && len(content) > 0 {
+		if cm, ok := content[0].(map[string]any); ok {
+			if text, ok := cm["text"].(string); ok {
+				return text
+			}
+		}
+	}
+	return result
 }
 
 // argsToMap normalises the forwarded arguments to JSON-shaped types
@@ -293,43 +342,8 @@ material}. truncated is true if the limit cap was hit.`,
 		if in.ParentID != nil {
 			args["parent_id"] = *in.ParentID
 		}
-		result, _, _ := callSketchup(s, "find_groups", args)
-		return slimFindGroupsEnvelope(result), nil, nil
+		return callSketchup(s, "find_groups", args)
 	})
-}
-
-// slimFindGroupsEnvelope re-emits the find_groups envelope keeping only
-// `groups` and `truncated`, matching the Python's post-processing.
-func slimFindGroupsEnvelope(result *mcp.CallToolResult) *mcp.CallToolResult {
-	if result == nil || len(result.Content) == 0 {
-		return result
-	}
-	text, ok := result.Content[0].(*mcp.TextContent)
-	if !ok {
-		return result
-	}
-	var env envelope
-	if err := json.Unmarshal([]byte(text.Text), &env); err != nil {
-		return result
-	}
-	if !env.Success {
-		return result
-	}
-	inner, ok := env.Result.(map[string]any)
-	if !ok {
-		inner = map[string]any{}
-	}
-	slim := map[string]any{
-		"groups":    inner["groups"],
-		"truncated": inner["truncated"],
-	}
-	if slim["groups"] == nil {
-		slim["groups"] = []any{}
-	}
-	if slim["truncated"] == nil {
-		slim["truncated"] = false
-	}
-	return textResult(successEnvelope(slim))
 }
 
 func registerGetSelection(srv *mcp.Server, s Sender) {
