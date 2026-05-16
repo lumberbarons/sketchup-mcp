@@ -200,10 +200,26 @@ func TestFailureEnvelopeCapturesExceptionMessage(t *testing.T) {
 
 func TestRequestIDIsThreadedThrough(t *testing.T) {
 	s := newSession(t)
+	// Two back-to-back calls so we can assert both type (uint64 from
+	// nextRequestID) and uniqueness — a hardcoded sentinel like
+	// `requestID: "X"` or `requestID: uint64(0)` would fail this.
 	_ = s.call(t, "get_selection", map[string]any{})
-	id := s.fake.lastCall(t).RequestID
-	if id == nil {
-		t.Fatal("request_id must be threaded through to SendCommand")
+	_ = s.call(t, "get_selection", map[string]any{})
+
+	if n := len(s.fake.Calls); n != 2 {
+		t.Fatalf("want 2 SendCommand calls, got %d", n)
+	}
+	id1, ok1 := s.fake.Calls[0].RequestID.(uint64)
+	id2, ok2 := s.fake.Calls[1].RequestID.(uint64)
+	if !ok1 || !ok2 {
+		t.Fatalf("request_id type: want uint64, got %T and %T",
+			s.fake.Calls[0].RequestID, s.fake.Calls[1].RequestID)
+	}
+	if id1 == 0 || id2 == 0 {
+		t.Fatalf("nextRequestID() must never produce zero, got id1=%d id2=%d", id1, id2)
+	}
+	if id1 == id2 {
+		t.Fatalf("consecutive request IDs must differ, got %d for both", id1)
 	}
 }
 
