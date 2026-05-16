@@ -16,7 +16,7 @@ func (stubSender) SendCommand(string, map[string]any, any) (any, error) {
 	return map[string]any{}, nil
 }
 
-func TestRegisterAll_ExposesTheSixteenToolNames(t *testing.T) {
+func TestRegisterAll_ExposesExpectedToolNames(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
 	RegisterAll(srv, stubSender{})
 
