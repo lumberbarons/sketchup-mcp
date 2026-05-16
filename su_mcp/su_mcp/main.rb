@@ -1457,6 +1457,28 @@ module SU_MCP
       end
     end
     
+    # CSG primitive shared by boolean_operation and the joinery handlers.
+    # SketchUp Pro's Solid Tools live on Sketchup::Group as instance methods
+    # (#union/#subtract/#intersect/#outer_shell); they consume both inputs
+    # and return a new manifold Group, or nil if Pro is unavailable / either
+    # input is non-manifold. Sketchup::Entities has no .subtract — using
+    # the entities collection raises NoMethodError, which is the regression
+    # that motivated this helper.
+    def solid_csg(target, tool, operation)
+      unless target.is_a?(Sketchup::Group) && tool.is_a?(Sketchup::Group)
+        raise "solid_csg requires two Sketchup::Group inputs (got #{target.class} and #{tool.class})"
+      end
+      unless target.respond_to?(operation)
+        raise "Solid Tools #{operation} unavailable — requires SketchUp Pro"
+      end
+      unless target.respond_to?(:manifold?) && target.manifold? && tool.manifold?
+        raise "Solid Tools #{operation} requires manifold solids — check inputs with Sketchup::Group#manifold?"
+      end
+      result = target.send(operation, tool)
+      raise "Solid Tools #{operation} returned nil — inputs must be manifold solids" if result.nil?
+      result
+    end
+
     # CSG via SketchUp Pro's Solid Tools (Sketchup::Group#union/subtract/intersect/
      # outer_shell). The Pro API consumes both inputs and returns a new manifold
      # group on success or nil if either input isn't a solid / Pro is unavailable.
@@ -1488,15 +1510,6 @@ module SU_MCP
         raise "Entity not found: #{missing.join(', ')}"
       end
 
-      unless target_entity.is_a?(Sketchup::Group) && tool_entity.is_a?(Sketchup::Group)
-        raise "Boolean operations require two Sketchup::Group inputs (got #{target_entity.class} and #{tool_entity.class})"
-      end
-
-      # Solid Tools require both inputs to be manifold solids.
-      unless target_entity.respond_to?(:manifold?) && target_entity.manifold? && tool_entity.manifold?
-        raise "Boolean operations require manifold solids — check inputs with Sketchup::Group#manifold?"
-      end
-
       # delete_originals defaults to true (Solid Tools' native behavior). When
       # false, work on copies so the originals survive.
       keep_originals = params.key?("delete_originals") && params["delete_originals"] == false
@@ -1508,12 +1521,13 @@ module SU_MCP
         tool_op = tool_entity
       end
 
-      result_group = target_op.send(operation, tool_op)
-      if result_group.nil?
+      begin
+        result_group = solid_csg(target_op, tool_op, operation.to_sym)
+      rescue StandardError
         # Clean up any copies we made for keep_originals mode.
-        target_op.erase! if keep_originals && target_op.valid?
-        tool_op.erase! if keep_originals && tool_op.valid?
-        raise "Solid Tools #{operation} returned nil — requires SketchUp Pro and two manifold solids"
+        target_op.erase! if keep_originals && target_op.respond_to?(:valid?) && target_op.valid?
+        tool_op.erase! if keep_originals && tool_op.respond_to?(:valid?) && tool_op.valid?
+        raise
       end
 
       {
@@ -1874,62 +1888,59 @@ module SU_MCP
     
     def create_mortise(board, width, height, depth, face_direction, bounds, offset_x, offset_y, offset_z)
       model = Sketchup.active_model
-      
-      # Get the board's entities
-      entities = board.is_a?(Sketchup::Group) ? board.entities : board.definition.entities
-      
-      # Calculate the position of the mortise based on the face direction
+
+      # Calculate the position of the mortise based on the face direction.
       mortise_position = calculate_position_on_face(face_direction, bounds, width, height, depth, offset_x, offset_y, offset_z)
-      
+
       log "Creating mortise at position: #{mortise_position.inspect} with dimensions: #{[width, height, depth].inspect}"
-      
-      # Create a box for the mortise
-      mortise_group = entities.add_group
-      
-      # Create the mortise box with the correct orientation
-      case face_direction
-      when :east, :west
-        # Mortise on east or west face (YZ plane)
-        mortise_face = mortise_group.entities.add_face(
-          [mortise_position[0], mortise_position[1], mortise_position[2]],
-          [mortise_position[0], mortise_position[1] + width, mortise_position[2]],
-          [mortise_position[0], mortise_position[1] + width, mortise_position[2] + height],
-          [mortise_position[0], mortise_position[1], mortise_position[2] + height]
-        )
-        mortise_face.pushpull(face_direction == :east ? -depth : depth)
-      when :north, :south
-        # Mortise on north or south face (XZ plane)
-        mortise_face = mortise_group.entities.add_face(
-          [mortise_position[0], mortise_position[1], mortise_position[2]],
-          [mortise_position[0] + width, mortise_position[1], mortise_position[2]],
-          [mortise_position[0] + width, mortise_position[1], mortise_position[2] + height],
-          [mortise_position[0], mortise_position[1], mortise_position[2] + height]
-        )
-        mortise_face.pushpull(face_direction == :north ? -depth : depth)
-      when :top, :bottom
-        # Mortise on top or bottom face (XY plane)
-        mortise_face = mortise_group.entities.add_face(
-          [mortise_position[0], mortise_position[1], mortise_position[2]],
-          [mortise_position[0] + width, mortise_position[1], mortise_position[2]],
-          [mortise_position[0] + width, mortise_position[1] + height, mortise_position[2]],
-          [mortise_position[0], mortise_position[1] + height, mortise_position[2]]
-        )
-        mortise_face.pushpull(face_direction == :top ? -depth : depth)
+
+      # Create the mortise as a top-level solid group. Solid Tools'
+      # Sketchup::Group#subtract requires both operands to be top-level
+      # groups; building inside board.entities and calling
+      # entities.subtract (which does not exist) was the prior regression.
+      mortise_group = model.active_entities.add_group
+
+      model.start_operation("Create mortise", true)
+      begin
+        case face_direction
+        when :east, :west
+          mortise_face = mortise_group.entities.add_face(
+            [mortise_position[0], mortise_position[1], mortise_position[2]],
+            [mortise_position[0], mortise_position[1] + width, mortise_position[2]],
+            [mortise_position[0], mortise_position[1] + width, mortise_position[2] + height],
+            [mortise_position[0], mortise_position[1], mortise_position[2] + height]
+          )
+          mortise_face.pushpull(face_direction == :east ? -depth : depth)
+        when :north, :south
+          mortise_face = mortise_group.entities.add_face(
+            [mortise_position[0], mortise_position[1], mortise_position[2]],
+            [mortise_position[0] + width, mortise_position[1], mortise_position[2]],
+            [mortise_position[0] + width, mortise_position[1], mortise_position[2] + height],
+            [mortise_position[0], mortise_position[1], mortise_position[2] + height]
+          )
+          mortise_face.pushpull(face_direction == :north ? -depth : depth)
+        when :top, :bottom
+          mortise_face = mortise_group.entities.add_face(
+            [mortise_position[0], mortise_position[1], mortise_position[2]],
+            [mortise_position[0] + width, mortise_position[1], mortise_position[2]],
+            [mortise_position[0] + width, mortise_position[1] + height, mortise_position[2]],
+            [mortise_position[0], mortise_position[1] + height, mortise_position[2]]
+          )
+          mortise_face.pushpull(face_direction == :top ? -depth : depth)
+        end
+
+        # Subtract via SU Pro Solid Tools. Both operands are consumed and
+        # `result` is a new top-level Group that replaces `board`.
+        result = solid_csg(board, mortise_group, :subtract)
+        model.commit_operation
+
+        { success: true, id: result.entityID }
+      rescue StandardError
+        model.abort_operation
+        raise
       end
-      
-      # Subtract the mortise from the board
-      entities.subtract(mortise_group.entities)
-      
-      # Clean up the temporary group
-      mortise_group.erase!
-      
-      # Return the result
-      { 
-        success: true, 
-        id: board.entityID
-      }
     end
-    
+
     def create_tenon(board, width, height, depth, face_direction, bounds, offset_x, offset_y, offset_z)
       model = Sketchup.active_model
       
