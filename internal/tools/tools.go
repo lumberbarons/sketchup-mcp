@@ -455,12 +455,17 @@ func registerCreateDovetail(srv *mcp.Server, s Sender) {
 		Name:        "create_dovetail",
 		Description: "Create a dovetail joint between two components",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in CreateDovetailInput) (*mcp.CallToolResult, any, error) {
+		// Defaults chosen so the no-other-args call produces a buildable
+		// trapezoid: with width=2, num_tails=3, angle=15°, the per-tail
+		// spacing is 0.4; depth=0.25 keeps the flared bottom under that
+		// (0.4 + 2·0.25·tan15° ≈ 0.53). Wider depth defaults made adjacent
+		// tail bottoms overlap and SketchUp returned 'Duplicate points'.
 		return callSketchup(s, "create_dovetail", map[string]any{
 			"tail_id":   in.TailID,
 			"pin_id":    in.PinID,
-			"width":     defaultFloat(in.Width, 1.0),
-			"height":    defaultFloat(in.Height, 1.0),
-			"depth":     defaultFloat(in.Depth, 1.0),
+			"width":     defaultFloat(in.Width, 2.0),
+			"height":    defaultFloat(in.Height, 2.0),
+			"depth":     defaultFloat(in.Depth, 0.25),
 			"angle":     defaultFloat(in.Angle, 15.0),
 			"num_tails": defaultInt(in.NumTails, 3),
 			"offset_x":  in.OffsetX,

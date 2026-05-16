@@ -2081,40 +2081,47 @@ module SU_MCP
     def create_dovetail(params)
       log "Creating dovetail joint with params: #{params.inspect}"
       model = Sketchup.active_model
-      
+
       # Get the tail and pin board IDs
       tail_id = params["tail_id"].to_s.gsub('"', '')
       pin_id = params["pin_id"].to_s.gsub('"', '')
-      
+
       log "Looking for tail board with ID: #{tail_id}"
       tail_board = model.find_entity_by_id(tail_id.to_i)
-      
+
       log "Looking for pin board with ID: #{pin_id}"
       pin_board = model.find_entity_by_id(pin_id.to_i)
-      
+
       unless tail_board && pin_board
         missing = []
         missing << "tail board" unless tail_board
         missing << "pin board" unless pin_board
         raise "Entity not found: #{missing.join(', ')}"
       end
-      
+
       # Ensure both entities are groups or component instances
       unless (tail_board.is_a?(Sketchup::Group) || tail_board.is_a?(Sketchup::ComponentInstance)) &&
              (pin_board.is_a?(Sketchup::Group) || pin_board.is_a?(Sketchup::ComponentInstance))
         raise "Dovetail operation requires groups or component instances"
       end
-      
-      # Get joint parameters
-      width = params["width"] || 1.0
+
+      # Get joint parameters. Defaults match the Go handler's: a width/depth
+      # combo where adjacent tail bottoms don't overlap with the default
+      # angle/num_tails — see validate_dovetail_geometry!.
+      width = params["width"] || 2.0
       height = params["height"] || 2.0
-      depth = params["depth"] || 1.0
+      depth = params["depth"] || 0.25
       angle = params["angle"] || 15.0  # Dovetail angle in degrees
-      num_tails = params["num_tails"] || 3
+      num_tails = (params["num_tails"] || 3).to_i
       offset_x = params["offset_x"] || 0.0
       offset_y = params["offset_y"] || 0.0
       offset_z = params["offset_z"] || 0.0
-      
+
+      # Validate dovetail geometry up-front so failures surface as readable
+      # messages rather than SketchUp's cryptic 'Duplicate points in array'
+      # when add_face is handed a degenerate trapezoid.
+      validate_dovetail_geometry!(width, height, depth, angle, num_tails)
+
       # Create the tails on the tail board
       tail_result = create_tails(tail_board, width, height, depth, angle, num_tails, offset_x, offset_y, offset_z)
       
@@ -2129,6 +2136,46 @@ module SU_MCP
       }
     end
     
+    # Pure: validate dovetail geometry before any add_face. Catches the
+    # parameter combos that would otherwise reach add_face as a degenerate
+    # polygon ('Duplicate points in array') or a self-intersecting
+    # trapezoid (bottom width exceeds the per-tail slot).
+    def validate_dovetail_geometry!(width, height, depth, angle, num_tails)
+      raise "num_tails must be >= 1 (got #{num_tails})" if num_tails < 1
+      raise "width must be > 0 (got #{width})" if width <= 0
+      raise "height must be > 0 (got #{height})" if height <= 0
+      raise "depth must be > 0 (got #{depth})" if depth <= 0
+      raise "angle must be > 0 and < 90 (got #{angle})" if angle <= 0 || angle >= 90
+
+      # Each tail occupies one slot of width = total_width / (2 * num_tails - 1).
+      # Tail flares outward by depth * tan(angle) on each side; if the bottom
+      # width exceeds 2 * tail_width the adjacent bottoms self-overlap and
+      # add_face starts producing degenerate trapezoid corners.
+      tail_width = width.to_f / (2 * num_tails - 1)
+      max_flare = depth.to_f * Math.tan(angle * Math::PI / 180.0)
+      tail_bottom_width = tail_width + 2 * max_flare
+      if tail_bottom_width > 2 * tail_width
+        raise "dovetail tail width too small for num_tails=#{num_tails}, depth=#{depth}, angle=#{angle}: tail spacing #{tail_width.round(4)} can't contain a #{tail_bottom_width.round(4)}-wide flare — reduce depth or num_tails, or increase width"
+      end
+    end
+
+    # Pure: drop near-duplicate points (within `epsilon` inches) so add_face
+    # never sees coincident vertices that would raise 'Duplicate points in
+    # array'. Compares against every kept point — N is small (4 for a tail
+    # trapezoid).
+    def dedupe_points(points, epsilon = 1e-6)
+      kept = []
+      points.each do |pt|
+        already = kept.any? do |k|
+          (k[0] - pt[0]).abs < epsilon &&
+            (k[1] - pt[1]).abs < epsilon &&
+            (k[2] - pt[2]).abs < epsilon
+        end
+        kept << pt unless already
+      end
+      kept
+    end
+
     def create_tails(board, width, height, depth, angle, num_tails, offset_x, offset_y, offset_z)
       model = Sketchup.active_model
       
@@ -2161,16 +2208,19 @@ module SU_MCP
         tail_bottom_width = tail_width + 2 * depth * Math.tan(angle_rad)
         
         # Create the tail shape
-        tail_points = [
+        tail_points = dedupe_points([
           [tail_center_x - tail_top_width/2, center_y - height/2, center_z],
           [tail_center_x + tail_top_width/2, center_y - height/2, center_z],
           [tail_center_x + tail_bottom_width/2, center_y - height/2, center_z - depth],
           [tail_center_x - tail_bottom_width/2, center_y - height/2, center_z - depth]
-        ]
-        
+        ])
+        if tail_points.length < 3
+          raise "dovetail tail #{i + 1} collapsed to #{tail_points.length} points — params too small for the chosen num_tails"
+        end
+
         # Create the tail face
         tail_face = tails_group.entities.add_face(tail_points)
-        
+
         # Extrude the tail
         tail_face.pushpull(height)
       end
@@ -2184,69 +2234,61 @@ module SU_MCP
     
     def create_pins(board, width, height, depth, angle, num_tails, offset_x, offset_y, offset_z)
       model = Sketchup.active_model
-      
-      # Get the board's entities
-      entities = board.is_a?(Sketchup::Group) ? board.entities : board.definition.entities
-      
-      # Get the board's bounds
+
+      # Get the board's bounds (parent-coord; for top-level boards, world).
       bounds = board.bounds
-      
+
       # Calculate the position of the dovetail joint
       center_x = bounds.center.x + offset_x
       center_y = bounds.center.y + offset_y
       center_z = bounds.center.z + offset_z
-      
+
       # Calculate the width of each tail and space
       total_width = width
       tail_width = total_width / (2 * num_tails - 1)
-      
-      # Create a group for the pins
-      pins_group = entities.add_group
-      
-      # Create a box for the entire pin area
+
+      # Build the pin block at top level so Solid Tools can subtract each
+      # tail cutout from it. (entities.subtract on Sketchup::Entities does
+      # not exist — the legacy implementation crashed with NoMethodError.)
+      pins_group = model.active_entities.add_group
+
       pin_area_face = pins_group.entities.add_face(
         [center_x - width/2, center_y - height/2, center_z],
         [center_x + width/2, center_y - height/2, center_z],
         [center_x + width/2, center_y + height/2, center_z],
         [center_x - width/2, center_y + height/2, center_z]
       )
-      
+
       # Extrude the pin area
       pin_area_face.pushpull(depth)
-      
-      # Create each tail cutout
+
+      # Subtract each tail cutout via the shared solid_csg helper. Each
+      # iteration consumes pins_group and returns the new manifold group.
       num_tails.times do |i|
-        # Calculate the position of this tail
         tail_center_x = center_x - width/2 + tail_width * (2 * i)
-        
-        # Calculate the dovetail shape
         angle_rad = angle * Math::PI / 180.0
         tail_top_width = tail_width
         tail_bottom_width = tail_width + 2 * depth * Math.tan(angle_rad)
-        
-        # Create a group for the tail cutout
-        tail_cutout_group = entities.add_group
-        
-        # Create the tail cutout shape
-        tail_points = [
+
+        tail_cutout_group = model.active_entities.add_group
+        tail_points = dedupe_points([
           [tail_center_x - tail_top_width/2, center_y - height/2, center_z],
           [tail_center_x + tail_top_width/2, center_y - height/2, center_z],
           [tail_center_x + tail_bottom_width/2, center_y - height/2, center_z - depth],
           [tail_center_x - tail_bottom_width/2, center_y - height/2, center_z - depth]
-        ]
-        
-        # Create the tail cutout face
+        ])
+        if tail_points.length < 3
+          raise "dovetail pin cutout #{i + 1} collapsed to #{tail_points.length} points — params too small for the chosen num_tails"
+        end
+
         tail_face = tail_cutout_group.entities.add_face(tail_points)
-        
-        # Extrude the tail cutout
         tail_face.pushpull(height)
-        
-        # Subtract the tail cutout from the pin area
-        pins_group.entities.subtract(tail_cutout_group.entities)
-        
-        # Clean up the temporary group
-        tail_cutout_group.erase!
+
+        pins_group = solid_csg(pins_group, tail_cutout_group, :subtract)
       end
+
+      # Fuse the pin block into the board so the joint stays attached.
+      board = solid_csg(board, pins_group, :union)
       
       # Return the result
       { 

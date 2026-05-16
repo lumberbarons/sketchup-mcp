@@ -411,7 +411,7 @@ func TestToolForwardsExpectedArguments(t *testing.T) {
 			expectedRubyMethod: "create_dovetail",
 			expectedRubyArgs: map[string]any{
 				"tail_id": "t", "pin_id": "p",
-				"width": 1.0, "height": 1.0, "depth": 1.0,
+				"width": 2.0, "height": 2.0, "depth": 0.25,
 				"angle": 15.0, "num_tails": 3,
 				"offset_x": 0.0, "offset_y": 0.0, "offset_z": 0.0,
 			},
