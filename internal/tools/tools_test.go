@@ -243,6 +243,26 @@ func TestCreateComponentPassesExplicitArgsThrough(t *testing.T) {
 	}
 }
 
+func TestCreateComponentForwardsName(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "create_component", map[string]any{
+		"type":       "cube",
+		"name":       "Floor Joist 3",
+		"position":   []float64{0, 0, 0},
+		"dimensions": []float64{1, 1, 1},
+	})
+	args := s.fake.lastArguments(t)
+	mustHave(t, args, "name", "Floor Joist 3")
+}
+
+func TestCreateComponentOmitsUnsetName(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "create_component", map[string]any{
+		"type": "cube",
+	})
+	mustNotHave(t, s.fake.lastArguments(t), "name")
+}
+
 // --- transform_component — None args must be OMITTED, not passed as null ----
 
 func TestTransformComponentOmitsUnsetArgs(t *testing.T) {

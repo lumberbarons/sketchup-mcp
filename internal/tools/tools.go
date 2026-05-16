@@ -175,6 +175,8 @@ func registerCreateComponent(srv *mcp.Server, s Sender) {
 		Description: `Create a new component in Sketchup.
 
 type: one of "cube", "cylinder", "sphere", "cone".
+name: optional group name (e.g. "Floor Joist 3"); enables addressing
+    the created entity by name in later calls.
 position: XYZ (inches) of the bounding-box minimum corner. Z extrusion is
     always +z, so a cube at position=[0,0,0] dimensions=[w,d,h] occupies
     z=[0, h] (no whim).
@@ -193,9 +195,11 @@ Returns id and bounds {min, max} so the caller can verify placement.`,
 		if dim == nil {
 			dim = []float64{1, 1, 1}
 		}
-		return callSketchup(s, "create_component", map[string]any{
-			"type": t, "position": pos, "dimensions": dim,
-		})
+		args := map[string]any{"type": t, "position": pos, "dimensions": dim}
+		if in.Name != "" {
+			args["name"] = in.Name
+		}
+		return callSketchup(s, "create_component", args)
 	})
 }
 

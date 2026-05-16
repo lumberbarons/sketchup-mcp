@@ -332,11 +332,12 @@ module SU_MCP
       log "Got active model: #{model.inspect}"
       entities = model.active_entities
       log "Got active entities: #{entities.inspect}"
-      
+
       pos = params["position"] || [0,0,0]
       dims = params["dimensions"] || [1,1,1]
-      
-      case params["type"]
+      name = params["name"]
+
+      result = case params["type"]
       when "cube"
         log "Creating cube at position #{pos.inspect} with dimensions #{dims.inspect}"
 
@@ -520,6 +521,13 @@ module SU_MCP
       else
         raise "Unknown component type: #{params["type"]}"
       end
+
+      if name && !name.to_s.empty?
+        group = model.find_entity_by_id(result[:id])
+        group.name = name.to_s if group
+        result[:name] = name.to_s
+      end
+      result
     end
 
     def create_extrusion(params)
