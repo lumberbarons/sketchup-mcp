@@ -275,7 +275,11 @@ func registerReplaceGeometry(srv *mcp.Server, s Sender) {
 The entity ID changes (old group erased, new group created). Cache the
 returned id if you address by ID rather than name. With recursive=true
 (default) errors if the target has nested sub-Groups or ComponentInstances;
-pass recursive=false to acknowledge children-loss.`,
+pass recursive=false to acknowledge children-loss.
+
+geometry shape: accepts either {"op": "cube"|...} or {"type": "cube"|...}.
+"type" matches create_component's vocabulary; "op" matches batch_create's.
+Pick whichever is convenient — they're interchangeable.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in ReplaceGeometryInput) (*mcp.CallToolResult, any, error) {
 		recursive := true
 		if in.Recursive != nil {

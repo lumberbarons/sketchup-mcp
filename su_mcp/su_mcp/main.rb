@@ -1157,13 +1157,23 @@ module SU_MCP
     # Pure: validate the geometry dict accepted by replace_geometry and the
     # "replace" batch op. Centralizes both shape and op-name checks so the
     # error message points at the actual problem.
+    #
+    # Accepts either "op" (batch_create vocabulary) or "type" (standalone
+    # create_component vocabulary) as the shape selector; if both are
+    # supplied they must agree. Returns the resolved op string.
     def validate_replace_geometry_dict(geometry)
       raise "'geometry' is required" if geometry.nil?
       raise "'geometry' must be a Hash" unless geometry.is_a?(Hash)
-      op = geometry["op"].to_s
-      unless KNOWN_REPLACE_GEOMETRY_OPS.include?(op)
-        raise "geometry 'op' must be one of: #{KNOWN_REPLACE_GEOMETRY_OPS.join(', ')} (got #{geometry["op"].inspect})"
+      op_val = geometry["op"]
+      type_val = geometry["type"]
+      if op_val && type_val && op_val.to_s != type_val.to_s
+        raise "geometry has both 'op' (#{op_val.inspect}) and 'type' (#{type_val.inspect}); supply one"
       end
+      op = (op_val || type_val).to_s
+      unless KNOWN_REPLACE_GEOMETRY_OPS.include?(op)
+        raise "geometry shape must be one of: #{KNOWN_REPLACE_GEOMETRY_OPS.join(', ')} (got #{(op_val || type_val).inspect})"
+      end
+      op
     end
 
     # Adapter: nested Groups + ComponentInstances inside a target. Pulled
@@ -1177,7 +1187,7 @@ module SU_MCP
     # name so we can stamp it on creates that take a name directly
     # (extrusion) without an extra .name= pass.
     def build_replacement_group(geometry, preserved_name)
-      op = geometry["op"].to_s
+      op = (geometry["op"] || geometry["type"]).to_s
       model = Sketchup.active_model
       if op == "extrusion"
         extrusion_params = geometry.dup

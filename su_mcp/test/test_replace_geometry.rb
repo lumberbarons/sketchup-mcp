@@ -49,6 +49,21 @@ class TestReplaceGeometry < Minitest::Test
     assert_match(/must be one of/, err.message)
   end
 
+  def test_validate_accepts_type_as_alias_for_op
+    # `type` is the create_component vocabulary; accept it as a synonym so
+    # callers don't trip on the op/type vocabulary split.
+    %w[cube cylinder sphere cone extrusion].each do |shape|
+      @server.send(:validate_replace_geometry_dict, { "type" => shape })
+    end
+  end
+
+  def test_validate_rejects_conflicting_op_and_type
+    err = assert_raises(RuntimeError) do
+      @server.send(:validate_replace_geometry_dict, { "op" => "cube", "type" => "sphere" })
+    end
+    assert_match(/both/, err.message)
+  end
+
   # -- batch_create accepts the new "replace" op ---------------------------
 
   def test_batch_validate_accepts_replace_op
