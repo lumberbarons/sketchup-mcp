@@ -43,6 +43,7 @@ type envelope struct {
 func callSketchup(s Sender, rubyTool string, args any) (*mcp.CallToolResult, any, error) {
 	argsMap, err := argsToMap(args)
 	if err != nil {
+		slog.Error("tool failed", "tool", rubyTool, "err", err)
 		return textResult(failureEnvelope(err.Error())), nil, nil
 	}
 	result, err := s.SendCommand(
