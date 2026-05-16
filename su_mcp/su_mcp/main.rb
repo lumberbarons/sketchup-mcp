@@ -1025,7 +1025,10 @@ module SU_MCP
 
       matched = []
       truncated = false
-      walker = recursive ? walk_entities_recursive(entities) : entities.each
+      # NOTE: Sketchup::Entities#each requires a block — calling it without
+      # one raises 'no block given' rather than returning an Enumerator like
+      # Array does. Use .to_a to get an Enumerable that works either way.
+      walker = recursive ? walk_entities_recursive(entities) : entities.to_a
       walker.each do |entity|
         next unless entity_matches_kind?(entity, include_components)
         next unless name_matches?(entity.name, prefix, pattern)

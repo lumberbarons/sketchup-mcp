@@ -215,6 +215,27 @@ module FindGroupsTestSupport
       @fake_entities || []
     end
   end
+
+  # Simulates Sketchup::Entities: #each requires a block (raises LocalJumpError
+  # 'no block given' without one) — unlike Array, it does NOT return an
+  # Enumerator. Regression fixture for sch-qfg.
+  class FakeSketchupEntities
+    def initialize(items); @items = items; end
+    def each
+      raise LocalJumpError, "no block given" unless block_given?
+      @items.each { |i| yield i }
+      self
+    end
+    def to_a; @items.dup; end
+  end
+
+  # FindGroupsTestServer variant that returns a Sketchup::Entities-style
+  # collection (block-required #each) instead of a plain Array.
+  class StrictEntitiesTestServer < FindGroupsTestServer
+    def resolve_search_root(_model, _parent_id)
+      FakeSketchupEntities.new(@fake_entities || [])
+    end
+  end
 end
 
 class TestFindGroupsOrchestration < Minitest::Test
@@ -341,6 +362,43 @@ class TestFindGroupsOrchestration < Minitest::Test
     # so consumers can rely on the descriptor shape.
     assert match.key?(:layer)
     assert match.key?(:material)
+  end
+
+  # Regression for sch-qfg: every filter mode used to raise 'no block given'
+  # against a Sketchup::Entities-backed search root (block-required #each).
+  # Drive find_groups through StrictEntitiesTestServer to pin all three modes.
+
+  def test_name_prefix_works_against_block_required_each
+    server = StrictEntitiesTestServer.new
+    server.fake_entities = [
+      FakeFGFullGroup.new("smoke_a", 1),
+      FakeFGFullGroup.new("smoke_b", 2),
+      FakeFGFullGroup.new("other", 3),
+    ]
+    result = server.send(:find_groups, "name_prefix" => "smoke")
+    assert_equal true, result[:success]
+    assert_equal %w[smoke_a smoke_b], result[:groups].map { |g| g[:name] }
+  end
+
+  def test_name_pattern_works_against_block_required_each
+    server = StrictEntitiesTestServer.new
+    server.fake_entities = [
+      FakeFGFullGroup.new("smoke_a", 1),
+      FakeFGFullGroup.new("other", 2),
+    ]
+    result = server.send(:find_groups, "name_pattern" => "smoke_.*")
+    assert_equal %w[smoke_a], result[:groups].map { |g| g[:name] }
+  end
+
+  def test_in_bounds_works_against_block_required_each
+    server = StrictEntitiesTestServer.new
+    server.fake_entities = [
+      FakeFGFullGroup.new("in_box", 1, make_bounds([1040, 0, 0], [1057, 6, 30])),
+      FakeFGFullGroup.new("far", 2, make_bounds([0, 0, 0], [10, 10, 10])),
+    ]
+    result = server.send(:find_groups,
+      "in_bounds" => { "min" => [999, -1, -1], "max" => [1100, 10, 30] })
+    assert_equal %w[in_box], result[:groups].map { |g| g[:name] }
   end
 
   def test_include_components_truthiness_coercion
