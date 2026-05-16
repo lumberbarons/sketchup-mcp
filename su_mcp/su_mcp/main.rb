@@ -1510,31 +1510,33 @@ module SU_MCP
         raise "Entity not found: #{missing.join(', ')}"
       end
 
-      # delete_originals defaults to true (Solid Tools' native behavior). When
-      # false, work on copies so the originals survive.
-      keep_originals = params.key?("delete_originals") && params["delete_originals"] == false
-      if keep_originals
-        target_op = target_entity.copy
-        tool_op = tool_entity.copy
-      else
-        target_op = target_entity
-        tool_op = tool_entity
+      # Solid Tools always consumes both operands; `delete_originals=false`
+      # would need a copy-the-group dance that Sketchup::Group doesn't
+      # expose directly (the legacy implementation tried .copy on each
+      # contained Edge — the 'undefined method copy for Sketchup::Edge'
+      # regression that produced this bug). Refuse explicitly rather
+      # than emitting half-formed geometry.
+      if params.key?("delete_originals") && params["delete_originals"] == false
+        raise "delete_originals: false is not supported — Solid Tools consumes both operands"
       end
 
+      # Wrap the whole CSG in a single transaction so any failure
+      # (non-manifold inputs, Pro unavailable) rolls back cleanly —
+      # partial geometry leaks were the second half of sch-mtl.
+      model.start_operation("Boolean #{operation}", true)
       begin
-        result_group = solid_csg(target_op, tool_op, operation.to_sym)
+        result_group = solid_csg(target_entity, tool_entity, operation.to_sym)
+        model.commit_operation
+
+        {
+          success: true,
+          id: result_group.entityID,
+          manifold: result_group.respond_to?(:manifold?) ? result_group.manifold? : nil
+        }
       rescue StandardError
-        # Clean up any copies we made for keep_originals mode.
-        target_op.erase! if keep_originals && target_op.respond_to?(:valid?) && target_op.valid?
-        tool_op.erase! if keep_originals && tool_op.respond_to?(:valid?) && tool_op.valid?
+        model.abort_operation
         raise
       end
-
-      {
-        success: true,
-        id: result_group.entityID,
-        manifold: result_group.respond_to?(:manifold?) ? result_group.manifold? : nil
-      }
     end
     
     def chamfer_edges(params)
