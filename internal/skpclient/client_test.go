@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -46,9 +47,10 @@ func TestUnwrap_EmptyMapWhenResultMissing(t *testing.T) {
 }
 
 func TestUnwrap_RaisesWithErrorMessage(t *testing.T) {
+	errVal := map[string]any{"message": "boom", "code": float64(-32000)}
 	env := map[string]any{
 		"jsonrpc": "2.0", "id": float64(1),
-		"error": map[string]any{"message": "boom"},
+		"error": errVal,
 	}
 	_, err := unwrapResponse(env)
 	if err == nil || !strings.Contains(err.Error(), "boom") {
@@ -57,6 +59,9 @@ func TestUnwrap_RaisesWithErrorMessage(t *testing.T) {
 	var se *SketchupError
 	if !errors.As(err, &se) {
 		t.Fatalf("want *SketchupError, got %T", err)
+	}
+	if !reflect.DeepEqual(se.Raw, errVal) {
+		t.Fatalf("Raw: got %v, want %v", se.Raw, errVal)
 	}
 }
 
