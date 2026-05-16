@@ -7,15 +7,17 @@ require_relative "test_helper"
 
 class FakeGroup < Sketchup::Group
   attr_reader :calls
-  attr_accessor :manifold_value, :subtract_response
+  attr_accessor :manifold_value, :subtract_response, :valid_value
 
-  def initialize(manifold: true)
+  def initialize(manifold: true, valid: true)
     @manifold_value = manifold
+    @valid_value = valid
     @subtract_response = nil
     @calls = []
   end
 
   def manifold?; @manifold_value; end
+  def valid?; @valid_value; end
 
   def union(other); record(:union, other); end
   def subtract(other); record(:subtract, other); end
@@ -84,6 +86,23 @@ class TestSolidCsg < Minitest::Test
       @server.send(:solid_csg, target, FakeGroup.new, :subtract)
     end
     assert_match(/returned nil/, err.message)
+  end
+
+  def test_rejects_deleted_target
+    target = FakeGroup.new(valid: false)
+    err = assert_raises(RuntimeError) do
+      @server.send(:solid_csg, target, FakeGroup.new, :subtract)
+    end
+    assert_match(/deleted/, err.message)
+    assert_match(/target/, err.message)
+  end
+
+  def test_rejects_deleted_tool
+    err = assert_raises(RuntimeError) do
+      @server.send(:solid_csg, FakeGroup.new, FakeGroup.new(valid: false), :subtract)
+    end
+    assert_match(/deleted/, err.message)
+    assert_match(/tool/, err.message)
   end
 
   def test_returns_result_group_on_success

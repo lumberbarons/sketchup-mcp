@@ -1491,6 +1491,17 @@ module SU_MCP
       unless target.is_a?(Sketchup::Group) && tool.is_a?(Sketchup::Group)
         raise "solid_csg requires two Sketchup::Group inputs (got #{target.class} and #{tool.class})"
       end
+      # Detect deleted references up-front rather than letting #manifold?
+      # raise the cryptic 'reference to deleted Group' from inside the
+      # manifold check. Solid Tools consumes both operands, so a stale ref
+      # passed in by a caller (e.g., a loop that reused the original handle
+      # after the first solid_csg call) shows up here with the side named.
+      stale = []
+      stale << "target" if target.respond_to?(:valid?) && !target.valid?
+      stale << "tool" if tool.respond_to?(:valid?) && !tool.valid?
+      unless stale.empty?
+        raise "Solid Tools #{operation} received deleted operand(s): #{stale.join(', ')} — the caller is holding a stale reference (Solid Tools consumes operands)"
+      end
       unless target.respond_to?(operation)
         raise "Solid Tools #{operation} unavailable — requires SketchUp Pro"
       end
