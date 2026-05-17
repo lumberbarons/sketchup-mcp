@@ -870,14 +870,23 @@ module SU_MCP
 
     # Compute the dimensions array that create_component's per-shape code
     # expects, from the more natural radius/height batch-op parameterization.
+    #
+    # Accepts either shape: an explicit "dimensions" array (create_component
+    # vocabulary, used by replace_geometry) or "radius"/"height" pair
+    # (batch_create vocabulary). Without the dimensions fallback for
+    # cylinder/sphere/cone, replace_geometry callers passing dimensions get
+    # [0,0,0] from `nil.to_f` and the constructor emits 24 colocated points,
+    # raising "Duplicate points in array" (sch-0q8).
     def primitive_dimensions(op)
       case op["op"].to_s
       when "cube"
         op["dimensions"]
       when "cylinder", "cone"
+        return op["dimensions"] if op["dimensions"]
         r = op["radius"].to_f
         [r * 2, r * 2, op["height"].to_f]
       when "sphere"
+        return op["dimensions"] if op["dimensions"]
         r = op["radius"].to_f
         [r * 2, r * 2, r * 2]
       end

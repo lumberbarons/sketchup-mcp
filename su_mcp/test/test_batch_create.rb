@@ -110,6 +110,39 @@ class TestBatchCreate < Minitest::Test
     assert_equal [2.0, 2.0, 4.0], s.send(:primitive_dimensions, op)
   end
 
+  # -- sch-0q8: dimensions fallback for cylinder/sphere/cone ----------------
+  # replace_geometry forwards the geometry dict (create_component vocabulary)
+  # through this method. Without the fallback, "dimensions" is ignored and
+  # radius/height resolve to 0, producing degenerate primitives that raise
+  # "Duplicate points in array" inside create_component.
+
+  def test_primitive_dimensions_cylinder_accepts_dimensions
+    s = TestServer.new
+    op = { "op" => "cylinder", "dimensions" => [4, 4, 6] }
+    assert_equal [4, 4, 6], s.send(:primitive_dimensions, op)
+  end
+
+  def test_primitive_dimensions_sphere_accepts_dimensions
+    s = TestServer.new
+    op = { "op" => "sphere", "dimensions" => [6, 6, 6] }
+    assert_equal [6, 6, 6], s.send(:primitive_dimensions, op)
+  end
+
+  def test_primitive_dimensions_cone_accepts_dimensions
+    s = TestServer.new
+    op = { "op" => "cone", "dimensions" => [4, 4, 6] }
+    assert_equal [4, 4, 6], s.send(:primitive_dimensions, op)
+  end
+
+  def test_primitive_dimensions_cylinder_prefers_explicit_dimensions_over_radius
+    # If both are present (a caller bridging vocabularies), the explicit
+    # dimensions array wins — radius/height are a derivation from it, not
+    # the other way around.
+    s = TestServer.new
+    op = { "op" => "cylinder", "dimensions" => [4, 4, 6], "radius" => 99, "height" => 99 }
+    assert_equal [4, 4, 6], s.send(:primitive_dimensions, op)
+  end
+
   # -- validate_batch_op ----------------------------------------------------
 
   def test_validate_rejects_non_hash
