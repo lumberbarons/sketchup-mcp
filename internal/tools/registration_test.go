@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"testing"
 
@@ -74,4 +75,50 @@ func TestRegisterAll_ExposesExpectedToolNames(t *testing.T) {
 			t.Fatalf("tool[%d]: got %q, want %q (full got=%v)", i, got[i], want[i], got)
 		}
 	}
+
+	// Every registered tool needs a Description and a non-empty InputSchema
+	// (both surface in the MCP client's tool picker / arg prompt).
+	for _, tool := range resp.Tools {
+		if tool.Description == "" {
+			t.Errorf("tool %q: Description is empty", tool.Name)
+		}
+		if tool.InputSchema == nil {
+			t.Errorf("tool %q: InputSchema is nil", tool.Name)
+			continue
+		}
+		schema := toSchemaMap(t, tool.InputSchema)
+		if schema["type"] == nil && schema["properties"] == nil {
+			t.Errorf("tool %q: InputSchema has no type or properties", tool.Name)
+		}
+	}
+
+	// Spot-check create_component carries its expected struct-derived fields.
+	for _, tool := range resp.Tools {
+		if tool.Name != "create_component" {
+			continue
+		}
+		schema := toSchemaMap(t, tool.InputSchema)
+		props, _ := schema["properties"].(map[string]any)
+		if props == nil {
+			t.Fatalf("create_component InputSchema has no properties")
+		}
+		for _, name := range []string{"type", "name", "position", "dimensions"} {
+			if _, ok := props[name]; !ok {
+				t.Errorf("create_component InputSchema missing property %q", name)
+			}
+		}
+	}
+}
+
+func toSchemaMap(t *testing.T, raw any) map[string]any {
+	t.Helper()
+	b, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatalf("marshal schema: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("unmarshal schema: %v", err)
+	}
+	return m
 }
