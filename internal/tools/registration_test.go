@@ -59,6 +59,7 @@ func TestRegisterAll_ExposesExpectedToolNames(t *testing.T) {
 		"find_groups",
 		"get_selection",
 		"inspect_geometry",
+		"pattern_linear",
 		"replace_geometry",
 		"set_material",
 		"transform_component",

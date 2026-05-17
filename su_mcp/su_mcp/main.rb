@@ -244,6 +244,8 @@ module SU_MCP
           set_material(args)
         when "boolean_operation"
           boolean_operation(args)
+        when "pattern_linear"
+          pattern_linear(args)
         when "chamfer_edges"
           chamfer_edges(args)
         when "fillet_edges"
@@ -1030,6 +1032,43 @@ module SU_MCP
       end
 
       bounds_result(entity)
+    end
+
+    # Replicate a top-level group along a vector. Group#copy returns a new
+    # group at the source's position; each copy is then translated by k*vector
+    # for k in 1..count so the original is undisturbed. The whole batch runs
+    # inside a single operation so it's one undo step.
+    def pattern_linear(params)
+      vector = params["vector"]
+      count = params["count"]
+      raise "vector must be a 3-element array [dx,dy,dz]" unless vector.is_a?(Array) && vector.length == 3
+      raise "count must be a positive integer" unless count.is_a?(Integer) && count >= 1
+
+      source = resolve_entity(params)
+      include_source = params.key?("include_source") ? params["include_source"] : true
+
+      model = Sketchup.active_model
+      model.start_operation("pattern_linear", true)
+      begin
+        copies = []
+        (1..count).each do |k|
+          copy = source.copy
+          delta = Geom::Vector3d.new(vector[0] * k, vector[1] * k, vector[2] * k)
+          copy.transform!(Geom::Transformation.translation(delta))
+          copy.name = source.name unless source.name.to_s.empty?
+          copies << copy
+        end
+        source.erase! unless include_source
+        model.commit_operation
+        {
+          success: true,
+          ids: copies.map(&:entityID),
+          count: copies.length
+        }
+      rescue StandardError
+        model.abort_operation
+        raise
+      end
     end
 
     def find_groups(params)

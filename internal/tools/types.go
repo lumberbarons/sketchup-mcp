@@ -110,3 +110,19 @@ type BooleanOpInput struct {
 type EvalRubyInput struct {
 	Code string `json:"code"`
 }
+
+// PatternLinearInput backs the pattern_linear tool.
+//
+// Address the source group by exactly one of ID or Name (same convention as
+// transform_component / delete_component). Vector is a [dx,dy,dz] world-space
+// translation applied per copy; Count is the number of *additional* copies to
+// create (so a count of 3 produces 3 new groups at offsets 1×, 2×, 3×).
+// IncludeSource defaults true on the Ruby side; pass false to erase the
+// original after the copies are made.
+type PatternLinearInput struct {
+	ID            *string   `json:"id,omitempty"`
+	Name          *string   `json:"name,omitempty"`
+	Vector        []float64 `json:"vector"`
+	Count         int       `json:"count"`
+	IncludeSource *bool     `json:"include_source,omitempty"`
+}

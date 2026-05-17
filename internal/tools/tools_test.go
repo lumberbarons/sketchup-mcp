@@ -370,6 +370,101 @@ func TestTransformComponentForwardsBothWhenBothGiven(t *testing.T) {
 	mustHave(t, args, "name", "Ridge")
 }
 
+// --- pattern_linear ---------------------------------------------------------
+
+func TestPatternLinearForwardsMinimumArgs(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "pattern_linear", map[string]any{
+		"id":     "42",
+		"vector": []float64{16, 0, 0},
+		"count":  3,
+	})
+	if s.fake.lastToolName(t) != "pattern_linear" {
+		t.Fatal("tool name")
+	}
+	want := map[string]any{
+		"id":     "42",
+		"vector": []float64{16, 0, 0},
+		"count":  float64(3),
+	}
+	if !jsonEqual(s.fake.lastArguments(t), want) {
+		t.Fatalf("args:\n got  %v\n want %v", s.fake.lastArguments(t), want)
+	}
+}
+
+func TestPatternLinearOmitsUnsetIncludeSource(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "pattern_linear", map[string]any{
+		"name":   "Joist",
+		"vector": []float64{0, 16, 0},
+		"count":  5,
+	})
+	mustNotHave(t, s.fake.lastArguments(t), "include_source")
+	mustNotHave(t, s.fake.lastArguments(t), "id")
+	mustHave(t, s.fake.lastArguments(t), "name", "Joist")
+}
+
+func TestPatternLinearForwardsIncludeSourceFalse(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "pattern_linear", map[string]any{
+		"id":             "1",
+		"vector":         []float64{1, 0, 0},
+		"count":          1,
+		"include_source": false,
+	})
+	mustHave(t, s.fake.lastArguments(t), "include_source", false)
+}
+
+func TestPatternLinearRejectsZeroCount(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "pattern_linear", map[string]any{
+		"id":     "1",
+		"vector": []float64{1, 0, 0},
+		"count":  0,
+	}))
+	if env.Success {
+		t.Fatalf("want failure, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatalf("ruby side must not be called on validation failure, got %d", len(s.fake.Calls))
+	}
+}
+
+func TestPatternLinearRejectsBadVectorLength(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "pattern_linear", map[string]any{
+		"id":     "1",
+		"vector": []float64{1, 0},
+		"count":  3,
+	}))
+	if env.Success {
+		t.Fatalf("want failure, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatalf("ruby side must not be called on validation failure, got %d", len(s.fake.Calls))
+	}
+}
+
+func TestPatternLinearSurfacesIDsPayload(t *testing.T) {
+	s := newSession(t)
+	s.fake.NextResult = mcpFrame(map[string]any{
+		"ids":   []any{float64(101), float64(102), float64(103)},
+		"count": float64(3),
+	}, nil)
+	env := envelopeOf(t, s.call(t, "pattern_linear", map[string]any{
+		"id":     "42",
+		"vector": []float64{16, 0, 0},
+		"count":  3,
+	}))
+	result := env.Result.(map[string]any)
+	if !jsonEqual(result["ids"], []any{float64(101), float64(102), float64(103)}) {
+		t.Fatalf("ids: %v", result["ids"])
+	}
+	if result["count"] != float64(3) {
+		t.Fatalf("count: %v", result["count"])
+	}
+}
+
 // --- argument-name parity for every tool ------------------------------------
 
 func TestToolForwardsExpectedArguments(t *testing.T) {

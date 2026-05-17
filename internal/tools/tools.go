@@ -162,6 +162,7 @@ func RegisterAll(server *mcp.Server, s Sender) {
 	registerSetMaterial(server, s)
 	registerExportScene(server, s)
 	registerBooleanOp(server, s)
+	registerPatternLinear(server, s)
 	registerEvalRuby(server, s)
 }
 
@@ -349,6 +350,33 @@ manifold solid Groups. delete_originals=true (default) consumes both inputs.`,
 			)), nil, nil
 		}
 		return callSketchup(s, "boolean_operation", in)
+	})
+}
+
+func registerPatternLinear(srv *mcp.Server, s Sender) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "pattern_linear",
+		Description: `Replicate a top-level Group along a vector — a linear array.
+
+Address the source by exactly one of id (entityID) or name (top-level
+Group name). vector is a [dx,dy,dz] world-space offset applied per copy;
+count is the number of *additional* copies to make (count=3 produces 3
+new groups at offsets 1×, 2×, 3× along vector — the source is unchanged
+by default). Pass include_source=false to erase the original after copying.
+
+Returns ids of the new groups in order, plus the count actually created.`,
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in PatternLinearInput) (*mcp.CallToolResult, any, error) {
+		if in.Count < 1 {
+			return textResult(failureEnvelope(
+				fmt.Sprintf("count must be >= 1, got %d", in.Count),
+			)), nil, nil
+		}
+		if len(in.Vector) != 3 {
+			return textResult(failureEnvelope(
+				fmt.Sprintf("vector must have 3 elements [dx,dy,dz], got %d", len(in.Vector)),
+			)), nil, nil
+		}
+		return callSketchup(s, "pattern_linear", in)
 	})
 }
 
