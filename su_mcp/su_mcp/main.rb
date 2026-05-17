@@ -837,7 +837,12 @@ module SU_MCP
         end
         create_extrusion(extrusion_params)
       when "translate"
-        transform_component(id_or_name_params(op["id_or_name"]).merge("position" => op["delta"]))
+        # Prefer "position" (matches transform_component's vocabulary); accept
+        # "delta" as a backwards-compat alias. Both missing → raise instead of
+        # silently no-op'ing (sch-gc5).
+        delta = op["position"] || op["delta"]
+        raise "translate op requires 'position' [dx,dy,dz]" if delta.nil?
+        transform_component(id_or_name_params(op["id_or_name"]).merge("position" => delta))
       when "move_to"
         transform_component(id_or_name_params(op["id_or_name"]).merge("move_to" => op["target"]))
       when "delete"

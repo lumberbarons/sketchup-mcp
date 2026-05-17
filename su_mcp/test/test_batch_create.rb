@@ -414,6 +414,33 @@ class TestExecuteBatchOpDispatch < Minitest::Test
     refute params.key?("move_to"), "translate must not use move_to key"
   end
 
+  # -- sch-gc5: translate accepts "position" + raises on missing field ----
+
+  def test_translate_op_accepts_position_field
+    # transform_component's vocabulary uses "position" for relative
+    # translation; the translate op should match it so callers don't have
+    # to learn a separate vocabulary.
+    op = { "op" => "translate", "id_or_name" => "Ridge", "position" => [0, 0, 5] }
+    @server.send(:execute_batch_op, op)
+    _method, params = @server.calls.first
+    assert_equal [0, 0, 5], params["position"]
+  end
+
+  def test_translate_op_prefers_position_over_delta
+    op = { "op" => "translate", "id_or_name" => "Ridge", "position" => [0, 0, 5], "delta" => [9, 9, 9] }
+    @server.send(:execute_batch_op, op)
+    _method, params = @server.calls.first
+    assert_equal [0, 0, 5], params["position"]
+  end
+
+  def test_translate_op_raises_when_position_and_delta_missing
+    # Silent no-ops were the prior failure mode (sch-gc5). Surface the
+    # error so the caller knows their op didn't apply.
+    op = { "op" => "translate", "id_or_name" => "Ridge" }
+    err = assert_raises(RuntimeError) { @server.send(:execute_batch_op, op) }
+    assert_match(/position/, err.message)
+  end
+
   def test_move_to_op_dispatches_to_transform_component_with_move_to
     op = { "op" => "move_to", "id_or_name" => 42, "target" => [5, 5, 5] }
     @server.send(:execute_batch_op, op)
