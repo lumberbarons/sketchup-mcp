@@ -1,29 +1,15 @@
-# SketchupMCP - Sketchup Model Context Protocol Integration
+# SketchUp MCP
 
-SketchupMCP connects Sketchup to Claude AI through the Model Context Protocol (MCP), allowing Claude to directly interact with and control Sketchup. This integration enables prompt-assisted 3D modeling, scene creation, and manipulation in Sketchup.
-
-Big Shoutout to [Blender MCP](https://github.com/ahujasid/blender-mcp) for the inspiration and structure.
-
-## Features
-
-* **Two-way communication**: Connect Claude AI to Sketchup through a TCP socket connection
-* **Component manipulation**: Create, modify, delete, and transform components in Sketchup
-* **Material control**: Apply and modify materials and colors
-* **Scene inspection**: Get detailed information about the current Sketchup scene
-* **Selection handling**: Get and manipulate selected components
-* **Ruby code evaluation**: Execute arbitrary Ruby code directly in SketchUp for advanced operations
-
-## Components
-
-The system consists of two main components:
-
-1. **Sketchup Extension** (`su_mcp/`): A Sketchup extension that creates a TCP server within Sketchup to receive and execute commands
-2. **MCP Server** (`cmd/sketchup-mcp/`): A Go server that implements the Model Context Protocol and connects to the Sketchup extension
+SketchUp MCP connects SketchUp to MCP clients (Claude Desktop, Claude
+Code, and any other Model Context Protocol client) through a small Go
+server and a Ruby extension that runs inside SketchUp. The result is
+prompt-assisted 3D modeling: ask the model to build, inspect, or
+transform geometry and it drives SketchUp directly.
 
 ## Requirements
 
 - SketchUp 2021 or newer (the extension uses `UI.start_timer` and
-  modern Ruby APIs available in 2021+)
+  modern Ruby APIs available in 2021+).
 - macOS, Linux, or Windows — prebuilt binaries are published for
   darwin/arm64, darwin/amd64, linux/amd64, linux/arm64, and
   windows/amd64.
@@ -43,30 +29,29 @@ Alternatively, if you have a recent Go toolchain installed:
 go install github.com/lumberbarons/sketchup-mcp/cmd/sketchup-mcp@latest
 ```
 
-### Sketchup Extension
+### SketchUp extension
 
-1. Build the `.rbz` from this repo:
-   ```bash
-   make rbz
-   ```
-   This runs `scripts/build_rbz.sh` and produces `su_mcp_v<version>.rbz`
-   in the repo root (the version comes from `su_mcp/extension.json`).
-2. In Sketchup, go to Window > Extension Manager
-3. Click "Install Extension" and select the `.rbz` file you just built
-4. Restart Sketchup
+1. Download `su_mcp_v<version>.rbz` from the same
+   [GitHub Releases](https://github.com/lumberbarons/sketchup-mcp/releases)
+   archive that ships the server binary.
+2. In SketchUp, go to **Window > Extension Manager**.
+3. Click **Install Extension** and select the `.rbz` file.
+4. Restart SketchUp.
+
+To build the extension from source instead, run `make rbz` in this
+repo — it produces `su_mcp_v<version>.rbz` in the repo root.
 
 ## Usage
 
-### Starting the Connection
+### Starting the connection
 
-1. In Sketchup, go to Extensions > SketchupMCP > Start Server. The
+1. In SketchUp, go to **Extensions > MCP Server > Start Server**. The
    extension listens on `localhost:9876`.
-2. Start the MCP server in a terminal so you can verify the
-   connection before wiring it up to a client:
+2. Start the MCP server in a terminal to verify the connection:
    ```bash
    sketchup-mcp
    ```
-   On a successful probe you'll see a log line like:
+   On a successful probe you'll see log lines like:
    ```
    level=INFO msg="SketchupMCP server starting" version=X.Y.Z
    level=INFO msg="SketchUp reachable" host=localhost port=9876
@@ -74,43 +59,58 @@ go install github.com/lumberbarons/sketchup-mcp/cmd/sketchup-mcp@latest
    If the second line says "SketchUp not reachable", confirm step 1
    completed and that nothing else is bound to port 9876. Override
    the target with `--host` / `--port` if needed.
-3. Leave the server running, or stop it with `Ctrl-C` once you're
-   ready to launch it from your MCP client (see below).
+3. Stop the server with `Ctrl-C` once you're ready to launch it from
+   your MCP client.
 
-### Using with Claude
+### Wiring into an MCP client
 
-Configure Claude to use the MCP server by pointing at the binary you
-downloaded:
+The server speaks MCP over stdio, so any MCP client can launch it.
+
+**Claude Desktop** — add to `claude_desktop_config.json`:
 
 ```json
-    "mcpServers": {
-        "sketchup": {
-            "command": "/usr/local/bin/sketchup-mcp"
-        }
+"mcpServers": {
+    "sketchup": {
+        "command": "/usr/local/bin/sketchup-mcp"
     }
+}
+```
+
+**Claude Code** — from your shell:
+
+```bash
+claude mcp add sketchup /usr/local/bin/sketchup-mcp
 ```
 
 Use the absolute path the install step produced (or wherever the
 binary lives on your `PATH`).
 
-Once connected, Claude can interact with Sketchup using the following capabilities:
+### Example prompts
 
-#### Tools
+* "Create a simple house model with a roof and windows"
+* "Get the current selection and tell me what's in it"
+* "Make the selected component red"
+* "Move the selected component 10 units up"
+* "Export the current scene as a 3D model"
+* "Create a complex arts and crafts cabinet using Ruby code"
 
-* `batch_create` - Run many create / mutate / delete operations as one SketchUp transaction (one undo step)
-* `create_component` - Create a new component with specified type, position, and dimensions
-* `create_extrusion` - Create a Group by extruding a 2D profile along x, y, or z (sloped tops, parallelogram rafters, fascia boards, etc.)
-* `delete_component` - Remove a component from the scene by entity ID or top-level group name
-* `transform_component` - Move, rotate, or scale a component, addressed by entity ID or top-level group name
-* `find_groups` - Query the model for groups by name prefix, regex, bounds intersection, or parent
-* `inspect_geometry` - Return per-face normals, areas, and loops (outer + holes) for a group
-* `replace_geometry` - Swap a group's geometry in place; preserves name, material, and layer
-* `get_selection` - Get information about currently selected components
-* `set_material` - Apply a material or color to a component
-* `export_scene` - Export the current scene (default format: `skp`)
-* `eval_ruby` - Execute arbitrary Ruby code in SketchUp for advanced operations
+## Tools
 
-#### Batching many operations
+* `create_component` — Create a primitive (cube, cylinder, sphere, cone) at a position with given dimensions
+* `create_extrusion` — Create a Group by extruding a 2D profile along an axis or along an arbitrary plane's normal
+* `delete_component` — Remove a component by entity ID or top-level group name
+* `transform_component` — Move, rotate, or scale a component, addressed by entity ID or top-level group name
+* `replace_geometry` — Swap a group's geometry in place; preserves name, material, and layer
+* `inspect_geometry` — Return per-face normals, areas, and loops (outer + holes) for a group
+* `find_groups` — Query the model for groups by name prefix, regex, bounds intersection, or parent
+* `batch_create` — Run many create / mutate / delete operations as one SketchUp transaction (one undo step)
+* `boolean_op` — CSG via SketchUp Pro's Solid Tools (union, subtract, intersect, outer_shell) — produces a manifold solid
+* `get_selection` — Get information about currently selected components
+* `set_material` — Apply a material or color to a component
+* `export_scene` — Export the current scene (default format: `skp`)
+* `eval_ruby` — Execute arbitrary Ruby code in SketchUp for advanced operations
+
+### Batching many operations
 
 `batch_create` runs an array of operations as a single SketchUp transaction. The whole batch is one undo step, the wire round-trip happens once instead of per piece, and any failure aborts the transaction — the model is unchanged.
 
@@ -152,7 +152,7 @@ batch_create({
 
 `id_or_name` is an integer entityID or a string group name. If a name matches more than one group the batch aborts — no ambiguous targets.
 
-#### Extruded profiles
+### Extruded profiles
 
 `create_extrusion` covers the most common shape in framing work — a 2D profile pushed along an axis — without dropping into `eval_ruby`. The 2D vertices are interpreted in the plane perpendicular to `extrude_axis`, and the face is auto-flipped so vertex winding doesn't matter.
 
@@ -209,7 +209,7 @@ create_extrusion({
 })
 ```
 
-#### Discovering existing geometry
+### Discovering existing geometry
 
 `find_groups` answers "what's already in the model?" without round-tripping through `eval_ruby`. Filters combine with AND; each match comes back with `id`, `name`, `bounds`, `layer`, and `material`. A `truncated: true` flag indicates results were capped at `limit` (default 200).
 
@@ -223,46 +223,44 @@ Compose with the name-based mutate ops to operate on the model without tracking 
 
 ```text
 find_groups({"name_prefix": "WA "})       # list the pieces
-transform_component({"name": "Ridge",     # then mutate by name
-                     "move_to": [0, 0, 96]})
+transform_component({"name": "WA Stud 3", # then mutate by name
+                     "move_to": [12, 0, 0]})
 ```
 
-`name_prefix` and `name_pattern` are mutually exclusive. Pass `parent_id` to scope the search into a nested group. Bounds matching is intersection (not strict containment), since "what's near X?" is the more common need.
+`name_prefix` and `name_pattern` are mutually exclusive. Pass `parent_id` to scope the search into a nested group. By default only the direct children of the search root are scanned; pass `recursive=true` to descend into nested groups, and `include_components=true` to also descend into `ComponentInstance` definitions — useful when named groups live inside other groups. Bounds matching is intersection (not strict containment), since "what's near X?" is the more common need.
 
-#### Addressing entities: by ID or by name
+### Addressing entities: by ID or by name
 
 `delete_component` and `transform_component` accept exactly one of:
 
 * `id` — the integer entity ID returned by `create_*` calls. Cheapest and unambiguous; use it inside tight loops where the ID is fresh.
 * `name` — exact match against a top-level Group's name (e.g. `"Ridge"`, `"Rafter W 5"`). Prefer this for human-driven edits where IDs are easy to lose track of. Lookup errors clearly if zero or multiple groups share the name — there is no silent first-match.
 
-### Example Commands
+## How it works
 
-Here are some examples of what you can ask Claude to do:
+Two processes, one socket:
 
-* "Create a simple house model with a roof and windows"
-* "Get the current selection and tell me what's in it"
-* "Make the selected component red"
-* "Move the selected component 10 units up"
-* "Export the current scene as a 3D model"
-* "Create a complex arts and crafts cabinet using Ruby code"
+1. **SketchUp extension** (`su_mcp/`) — a Ruby extension that runs inside
+   SketchUp and listens on a TCP socket for tool calls.
+2. **MCP server** (`cmd/sketchup-mcp/`) — a Go process that speaks MCP
+   to your client over stdio and forwards each tool call to the
+   extension as newline-terminated JSON-RPC 2.0 over TCP
+   (default `localhost:9876`). A fresh connection is opened per call.
 
 ## Troubleshooting
 
-* **Connection issues**: Make sure both the Sketchup extension server and the MCP server are running
-* **Command failures**: Check the Ruby Console in Sketchup for error messages
-* **Timeout errors**: Try simplifying your requests or breaking them into smaller steps
-
-## Technical Details
-
-### Communication Protocol
-
-The Go server and Ruby extension speak newline-terminated JSON-RPC 2.0 over TCP (default port 9876). Each call opens a fresh connection.
+* **Connection issues** — make sure both the SketchUp extension server and the MCP server are running.
+* **Command failures** — check the Ruby Console in SketchUp for error messages.
+* **Timeout errors** — try simplifying your requests or breaking them into smaller steps.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome — please open a pull request.
+
+## Acknowledgements
+
+Big shoutout to [Blender MCP](https://github.com/ahujasid/blender-mcp) for the inspiration and structure.
 
 ## License
 
-MIT 
+MIT

@@ -59,7 +59,7 @@ func buildInstructions(host string, port int, reachable bool) string {
 		return base
 	}
 	return fmt.Sprintf(
-		"%s\n\nNOTE: the SketchUp extension was not reachable on %s:%d at startup. Tool calls will fail until you open SketchUp, install the su_mcp extension, and click Extensions → SketchupMCP → Start Server.",
+		"%s\n\nNOTE: the SketchUp extension was not reachable on %s:%d at startup. Tool calls will fail until you open SketchUp, install the su_mcp extension, and click Extensions → MCP Server → Start Server.",
 		base, host, port,
 	)
 }

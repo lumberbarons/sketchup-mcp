@@ -277,7 +277,7 @@ type ExtensionUnreachableError struct {
 
 func (e *ExtensionUnreachableError) Error() string {
 	return fmt.Sprintf(
-		"SketchUp extension not reachable on %s:%d — open SketchUp, install the su_mcp extension, and click Extensions → SketchupMCP → Start Server",
+		"SketchUp extension not reachable on %s:%d — open SketchUp, install the su_mcp extension, and click Extensions → MCP Server → Start Server",
 		e.Host, e.Port,
 	)
 }
