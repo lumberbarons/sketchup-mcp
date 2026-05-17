@@ -63,3 +63,5 @@ release:
 
     Prebuilt MCP server binary that bridges Claude (and other MCP clients) to the
     SketchUp Ruby extension. Pair with the matching `su_mcp_v{{ .Version }}.rbz`.
+  extra_files:
+    - glob: ./su_mcp_v*.rbz
