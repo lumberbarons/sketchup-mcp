@@ -146,6 +146,9 @@ func (c *Client) connectWithRetries(maxRetries int) (net.Conn, error) {
 			break
 		}
 	}
+	if isExtensionUnreachable(lastErr) {
+		return nil, &ExtensionUnreachableError{Host: c.Host, Port: c.Port, Cause: lastErr}
+	}
 	return nil, fmt.Errorf("could not connect to SketchUp at %s:%d after %d attempts: %w",
 		c.Host, c.Port, attempts, lastErr)
 }
@@ -153,6 +156,28 @@ func (c *Client) connectWithRetries(maxRetries int) (net.Conn, error) {
 // isConnRefused reports whether err is a "connection refused" dial error.
 func isConnRefused(err error) bool {
 	return errors.Is(err, syscall.ECONNREFUSED)
+}
+
+// isExtensionUnreachable matches the dial-class failures that indicate the
+// extension is not running or unreachable on the network.
+func isExtensionUnreachable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isConnRefused(err) {
+		return true
+	}
+	if errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH) {
+		return true
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		var opErr *net.OpError
+		if errors.As(err, &opErr) && opErr.Op == "dial" {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) sendRequest(conn net.Conn, request map[string]any) error {
@@ -233,6 +258,23 @@ type SketchupError struct {
 }
 
 func (e *SketchupError) Error() string { return e.Message }
+
+// ExtensionUnreachableError signals that the SketchUp Ruby extension could
+// not be reached over TCP — the extension is probably not running.
+type ExtensionUnreachableError struct {
+	Host  string
+	Port  int
+	Cause error
+}
+
+func (e *ExtensionUnreachableError) Error() string {
+	return fmt.Sprintf(
+		"SketchUp extension not reachable on %s:%d — open SketchUp, install the su_mcp extension, and click Extensions → SketchupMCP → Start Server",
+		e.Host, e.Port,
+	)
+}
+
+func (e *ExtensionUnreachableError) Unwrap() error { return e.Cause }
 
 // SketchupTimeoutError signals that the per-call deadline tripped while
 // waiting on the SketchUp extension. SketchUp may be stuck on a modal

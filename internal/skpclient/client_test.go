@@ -231,6 +231,13 @@ func TestConnect_FailsFastOnConnRefused(t *testing.T) {
 	if got := atomic.LoadInt32(&attempts); got != 1 {
 		t.Fatalf("ECONNREFUSED must skip retries; got %d attempts", got)
 	}
+	var ue *ExtensionUnreachableError
+	if !errors.As(err, &ue) {
+		t.Fatalf("want *ExtensionUnreachableError, got %T (%v)", err, err)
+	}
+	if !strings.Contains(ue.Error(), "extension not reachable") {
+		t.Fatalf("want friendly message, got %q", ue.Error())
+	}
 }
 
 func TestConnect_RaisesAfterExhaustingRetries(t *testing.T) {
