@@ -377,4 +377,3 @@ func registerEvalRuby(srv *mcp.Server, s Sender) {
 		return callSketchup(s, "eval_ruby", in)
 	})
 }
-
