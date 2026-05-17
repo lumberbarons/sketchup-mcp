@@ -369,6 +369,41 @@ func TestSend_PropagatesSketchupErrorEnvelope(t *testing.T) {
 	}
 }
 
+// -- CallTimeout / SketchupTimeoutError --------------------------------------
+
+func TestSend_TimesOutWhenSocketStalls(t *testing.T) {
+	c := newClient()
+	c.CallTimeout = 50 * time.Millisecond
+
+	server, client := net.Pipe()
+	defer server.Close()
+	// Server reads but never replies — simulates SketchUp accepting the
+	// connection then hanging on a modal dialog.
+	go func() {
+		reader := bufio.NewReader(server)
+		_, _ = reader.ReadBytes('\n')
+		// hold the socket open without responding
+		select {}
+	}()
+
+	c.Dialer = func() (net.Conn, error) { return client, nil }
+
+	_, err := c.SendCommand("noop", nil, nil)
+	if err == nil {
+		t.Fatal("want timeout error, got nil")
+	}
+	var te *SketchupTimeoutError
+	if !errors.As(err, &te) {
+		t.Fatalf("want *SketchupTimeoutError, got %T (%v)", err, err)
+	}
+	if te.Budget != 50*time.Millisecond {
+		t.Fatalf("want Budget=50ms, got %s", te.Budget)
+	}
+	if !strings.Contains(te.Error(), "SketchUp did not respond") {
+		t.Fatalf("want user-facing message, got %q", te.Error())
+	}
+}
+
 // -- Probe -------------------------------------------------------------------
 
 func TestProbe_TrueWhenSocketOpens(t *testing.T) {

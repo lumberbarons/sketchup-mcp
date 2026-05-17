@@ -6,6 +6,7 @@ package skpclient
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -19,6 +20,15 @@ type Client struct {
 	Port    int
 	Timeout time.Duration
 
+	// CallTimeout bounds an entire request/response cycle on an open socket.
+	// Once the TCP connection is established, the read+write must complete
+	// within this budget — otherwise SetDeadline trips and the call returns
+	// a timeout error. Zero means no per-call deadline.
+	//
+	// Defaulted generously by New() because some tools (large boolean_op,
+	// batch_create on big models, eval_ruby) are legitimately slow.
+	CallTimeout time.Duration
+
 	// Dialer is an optional hook for tests. When nil, SendCommand dials TCP
 	// to Host:Port with Timeout.
 	Dialer func() (net.Conn, error)
@@ -27,9 +37,15 @@ type Client struct {
 	Logger *slog.Logger
 }
 
-// New returns a Client with a 15-second timeout, matching the Python default.
+// New returns a Client with a 15-second dial timeout and a 120-second
+// per-call timeout.
 func New(host string, port int) *Client {
-	return &Client{Host: host, Port: port, Timeout: 15 * time.Second}
+	return &Client{
+		Host:        host,
+		Port:        port,
+		Timeout:     15 * time.Second,
+		CallTimeout: 120 * time.Second,
+	}
 }
 
 func (c *Client) logger() *slog.Logger {
@@ -81,14 +97,31 @@ func (c *Client) SendCommand(method string, params map[string]any, requestID any
 	}
 	defer conn.Close()
 
+	if c.CallTimeout > 0 {
+		_ = conn.SetDeadline(time.Now().Add(c.CallTimeout))
+	}
+
 	if err := c.sendRequest(conn, request); err != nil {
-		return nil, err
+		return nil, wrapTimeoutErr(err, c.CallTimeout)
 	}
 	response, err := c.readResponse(conn)
 	if err != nil {
-		return nil, err
+		return nil, wrapTimeoutErr(err, c.CallTimeout)
 	}
 	return unwrapResponse(response)
+}
+
+// wrapTimeoutErr replaces a net-timeout error with a user-facing
+// SketchupTimeoutError. Non-timeout errors pass through unchanged.
+func wrapTimeoutErr(err error, budget time.Duration) error {
+	if err == nil {
+		return nil
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return &SketchupTimeoutError{Budget: budget, Cause: err}
+	}
+	return err
 }
 
 func (c *Client) connectWithRetries(maxRetries int) (net.Conn, error) {
@@ -186,3 +219,20 @@ type SketchupError struct {
 }
 
 func (e *SketchupError) Error() string { return e.Message }
+
+// SketchupTimeoutError signals that the per-call deadline tripped while
+// waiting on the SketchUp extension. SketchUp may be stuck on a modal
+// dialog or a long-running operation.
+type SketchupTimeoutError struct {
+	Budget time.Duration
+	Cause  error
+}
+
+func (e *SketchupTimeoutError) Error() string {
+	return fmt.Sprintf(
+		"SketchUp did not respond within %s — the extension may be stuck on a modal dialog or a long operation",
+		e.Budget,
+	)
+}
+
+func (e *SketchupTimeoutError) Unwrap() error { return e.Cause }
