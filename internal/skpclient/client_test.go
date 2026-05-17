@@ -19,6 +19,24 @@ func newClient() *Client {
 	return &Client{Host: "localhost", Port: 9876, Timeout: time.Second}
 }
 
+// -- New constructor ---------------------------------------------------------
+
+func TestNew_DefaultsAndAddress(t *testing.T) {
+	c := New("h", 1)
+	if c.Host != "h" {
+		t.Errorf("Host: want %q, got %q", "h", c.Host)
+	}
+	if c.Port != 1 {
+		t.Errorf("Port: want 1, got %d", c.Port)
+	}
+	if c.Timeout != 3*time.Second {
+		t.Errorf("Timeout: want 3s, got %s", c.Timeout)
+	}
+	if c.CallTimeout != 120*time.Second {
+		t.Errorf("CallTimeout: want 120s, got %s", c.CallTimeout)
+	}
+}
+
 // -- unwrapResponse ----------------------------------------------------------
 
 func TestUnwrap_ReturnsResultPayload(t *testing.T) {
