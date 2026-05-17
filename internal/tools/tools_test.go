@@ -696,6 +696,38 @@ func TestFindGroupsReturnsEmptyListWhenNoMatches(t *testing.T) {
 	}
 }
 
+// Failure-path coverage: when the Sender errors, the find_groups envelope
+// must surface the underlying message instead of returning a slimmed
+// success-shape (groups/truncated). Pins the !err branch in callSketchup
+// for the find_groups route.
+func TestFindGroupsPassesThroughSenderError(t *testing.T) {
+	s := newSession(t)
+	s.fake.NextError = errors.New("boom")
+	env := envelopeOf(t, s.call(t, "find_groups", map[string]any{}))
+	if env.Success {
+		t.Fatalf("want failure envelope, got %v", env)
+	}
+	msg, _ := env.Error.(string)
+	if !strings.Contains(msg, "boom") {
+		t.Fatalf("want error 'boom', got %q", msg)
+	}
+}
+
+// Non-map result coverage: when the Ruby side returns a scalar (no MCP
+// frame at all), slimMCPFrame must pass it through unchanged rather than
+// dropping it or substituting a placeholder.
+func TestFindGroupsPassesThroughNonMapResult(t *testing.T) {
+	s := newSession(t)
+	s.fake.NextResult = "oops"
+	env := envelopeOf(t, s.call(t, "find_groups", map[string]any{}))
+	if !env.Success {
+		t.Fatalf("want success envelope, got %v", env)
+	}
+	if env.Result != "oops" {
+		t.Fatalf("non-map result: got %v, want %q", env.Result, "oops")
+	}
+}
+
 // --- boolean_op -------------------------------------------------------------
 
 func TestBooleanOpForwardsSubtract(t *testing.T) {
