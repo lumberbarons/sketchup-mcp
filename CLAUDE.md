@@ -16,7 +16,6 @@ extension (`su_mcp`) that runs inside SketchUp itself.
 | `scripts/build_rbz.sh` | Build script that zips `su_mcp/` into `su_mcp_v<version>.rbz` for Extension Manager. Also runnable via `make rbz`. | Cutting a new extension build. |
 | `.goreleaser.yaml` | Cross-compile config: produces darwin/linux/windows binaries on a `v*` tag push. | Adding a release target or changing archive layout. |
 | `su_mcp/extension.json` | SketchUp extension metadata. Version lives here and is read by `build_rbz.sh`. | Bumping the extension version. |
-| `plan.md` | Roadmap for the SketchUp MCP server (feature priorities, future tools). | Considering scope of a new tool or deciding what to build next. |
 | `Makefile` | Build/test/lint/rbz targets (run `make help` to list). | Looking for a command not covered by the 'Common commands' block. |
 
 ## Common commands
