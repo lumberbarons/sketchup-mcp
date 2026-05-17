@@ -292,6 +292,24 @@ func TestSend_RetriesOnlyOnConnectFailures(t *testing.T) {
 	}
 }
 
+// TestSend_RetriesUpToBudgetThenFails pins the retry budget at the public
+// API boundary so it'd fail if SendCommand silently dropped retries below 2.
+func TestSend_RetriesUpToBudgetThenFails(t *testing.T) {
+	c := newClient()
+	var attempts int32
+	c.Dialer = func() (net.Conn, error) {
+		atomic.AddInt32(&attempts, 1)
+		return nil, errors.New("dial refused")
+	}
+	_, err := c.SendCommand("noop", nil, nil)
+	if err == nil {
+		t.Fatal("want error after exhausted retries, got nil")
+	}
+	if got := atomic.LoadInt32(&attempts); got != 3 {
+		t.Fatalf("want 3 dial attempts (budget=2 retries), got %d", got)
+	}
+}
+
 // -- SendCommand happy path --------------------------------------------------
 
 func TestSend_SerialisesRequestAndUnwrapsResult(t *testing.T) {
