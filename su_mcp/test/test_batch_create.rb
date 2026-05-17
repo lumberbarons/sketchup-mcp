@@ -458,4 +458,51 @@ class TestExecuteBatchOpDispatch < Minitest::Test
     assert_equal 99, result[:id]
     assert_equal true, result[:success]
   end
+
+  # -- sch-i7a: sub-ops accept "id"/"name" directly -------------------------
+
+  def test_translate_op_accepts_name_directly
+    op = { "op" => "translate", "name" => "Ridge", "position" => [1, 0, 0] }
+    @server.send(:execute_batch_op, op)
+    _method, params = @server.calls.first
+    assert_equal "Ridge", params["name"]
+    refute params.key?("id_or_name"), "id_or_name should not leak into transform_component params"
+  end
+
+  def test_translate_op_accepts_id_directly
+    op = { "op" => "translate", "id" => 42, "position" => [1, 0, 0] }
+    @server.send(:execute_batch_op, op)
+    _method, params = @server.calls.first
+    assert_equal 42, params["id"]
+  end
+
+  def test_move_to_op_accepts_name_directly
+    op = { "op" => "move_to", "name" => "Beam", "target" => [5, 5, 5] }
+    @server.send(:execute_batch_op, op)
+    _method, params = @server.calls.first
+    assert_equal "Beam", params["name"]
+    assert_equal [5, 5, 5], params["move_to"]
+  end
+
+  def test_delete_op_accepts_id_directly
+    op = { "op" => "delete", "id" => 99 }
+    @server.send(:execute_batch_op, op)
+    assert_equal [:resolve_entity, { "id" => 99 }], @server.calls.first
+  end
+
+  def test_addressing_raises_when_no_id_name_or_id_or_name
+    op = { "op" => "delete" }
+    err = assert_raises(RuntimeError) { @server.send(:execute_batch_op, op) }
+    assert_match(/'id'|'name'/, err.message)
+  end
+
+  def test_addressing_prefers_id_over_id_or_name
+    # If both are supplied, "id" wins. Keeps the alias from silently
+    # overriding the canonical field.
+    op = { "op" => "translate", "id" => 7, "id_or_name" => "Other", "position" => [0, 0, 1] }
+    @server.send(:execute_batch_op, op)
+    _method, params = @server.calls.first
+    assert_equal 7, params["id"]
+    refute params.key?("name")
+  end
 end

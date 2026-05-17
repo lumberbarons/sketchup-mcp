@@ -220,10 +220,23 @@ func registerBatchCreate(srv *mcp.Server, s Sender) {
 		Name: "batch_create",
 		Description: `Run many create / mutate / delete operations as a single SketchUp transaction.
 
-Each operations item is a dict with an "op" key; see README for the
-full op vocabulary (cube, cylinder, sphere, cone, extrusion, translate,
-move_to, delete, replace). The whole batch is one undo step. Any failure
-aborts the transaction — the model is unchanged.`,
+Each operations item is a dict with an "op" key. The whole batch is one
+undo step. Any failure aborts the transaction — the model is unchanged.
+
+Create ops:
+  - cube/cylinder/sphere/cone: name, position [x,y,z], dimensions [w,d,h]
+    (cube), or radius + height (cylinder/cone) or radius (sphere). Optional
+    material.
+  - extrusion: name, profile [[x,y],...], plus extrude_axis+extrude_from+
+    extrude_to OR plane+extrude_depth. Optional holes, material.
+
+Mutate/delete ops address a group by "id" (entityID) or "name" (group
+name) — same as transform_component/delete_component elsewhere. Legacy
+"id_or_name" is still accepted for backwards compatibility:
+  - translate: id|name, position [dx,dy,dz] (relative).
+  - move_to:   id|name, target [x,y,z] (absolute bounds.min).
+  - delete:    id|name.
+  - replace:   id|name, geometry dict (see replace_geometry).`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in BatchCreateInput) (*mcp.CallToolResult, any, error) {
 		return callSketchup(s, "batch_create", in)
 	})

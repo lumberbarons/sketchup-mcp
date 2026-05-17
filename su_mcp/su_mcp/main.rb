@@ -842,16 +842,16 @@ module SU_MCP
         # silently no-op'ing (sch-gc5).
         delta = op["position"] || op["delta"]
         raise "translate op requires 'position' [dx,dy,dz]" if delta.nil?
-        transform_component(id_or_name_params(op["id_or_name"]).merge("position" => delta))
+        transform_component(addressing_params(op).merge("position" => delta))
       when "move_to"
-        transform_component(id_or_name_params(op["id_or_name"]).merge("move_to" => op["target"]))
+        transform_component(addressing_params(op).merge("move_to" => op["target"]))
       when "delete"
-        entity = resolve_entity(id_or_name_params(op["id_or_name"]))
+        entity = resolve_entity(addressing_params(op))
         id = entity.entityID
         entity.erase!
         { id: id, success: true }
       when "replace"
-        replace_params = id_or_name_params(op["id_or_name"]).merge("geometry" => op["geometry"])
+        replace_params = addressing_params(op).merge("geometry" => op["geometry"])
         replace_params["recursive"] = op["recursive"] if op.key?("recursive")
         replace_geometry(replace_params)
       else
@@ -870,6 +870,23 @@ module SU_MCP
       when String then { "name" => raw }
       else
         raise "id_or_name must be an Integer (entityID) or String (group name), got #{raw.class}"
+      end
+    end
+
+    # Addressing helper for batch_create sub-ops (translate/move_to/delete/
+    # replace). Accepts the same "id" or "name" fields used everywhere else
+    # in the API; falls back to the legacy unified "id_or_name" field for
+    # backwards compatibility (sch-i7a). Raises if none are provided so a
+    # missing addressing key surfaces as an explicit error.
+    def addressing_params(op)
+      if op.key?("id") && !op["id"].nil?
+        { "id" => op["id"] }
+      elsif op.key?("name") && !op["name"].nil?
+        { "name" => op["name"] }
+      elsif op.key?("id_or_name") && !op["id_or_name"].nil?
+        id_or_name_params(op["id_or_name"])
+      else
+        raise "operation requires 'id' (entityID) or 'name' (group name)"
       end
     end
 
