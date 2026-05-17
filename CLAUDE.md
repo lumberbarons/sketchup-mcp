@@ -15,7 +15,7 @@ extension (`su_mcp`) that runs inside SketchUp itself.
 | `su_mcp/test/` | Minitest suite for pure-logic helpers in the Ruby extension. `test_helper.rb` stubs the SketchUp environment so `main.rb` loads without it. | Adding tests for new pure helpers (no `Sketchup.`/`Geom.`/`UI.` calls). Use `make test-ruby`. |
 | `scripts/build_rbz.sh` | Build script that zips `su_mcp/` into `su_mcp_v<version>.rbz` for Extension Manager. Also runnable via `make rbz`. | Cutting a new extension build. |
 | `.goreleaser.yaml` | Cross-compile config: produces darwin/linux/windows binaries on a `v*` tag push. | Adding a release target or changing archive layout. |
-| `su_mcp/extension.json` | SketchUp extension metadata. Version lives here and is read by `build_rbz.sh`. | Bumping the extension version. |
+| `su_mcp/extension.json` | SketchUp extension metadata. Source `version` is the static placeholder `"local"`; the release workflow stamps it from the git tag at build time. | Changing extension metadata (name, description, etc.). |
 | `Makefile` | Build/test/lint/rbz targets (run `make help` to list). | Looking for a command not covered by the 'Common commands' block. |
 
 ## Common commands
@@ -34,9 +34,11 @@ make rbz            # build the SketchUp .rbz (runs scripts/build_rbz.sh)
 
 - The Go server and Ruby extension speak newline-terminated JSON-RPC 2.0
   framing. Don't refactor framing on one side without updating the other.
-- The Go binary's version is stamped at link time (`-ldflags -X
-  main.version=...`); the Ruby extension version lives in
-  `su_mcp/extension.json`. Bump both together for a coordinated release.
+- Both versions are stamped at release time, not hand-bumped: the Go
+  binary via goreleaser ldflags (`-X main.version={{ .Version }}`) and
+  the Ruby extension by the release workflow rewriting
+  `su_mcp/extension.json` from the git tag. Cutting a release is just
+  `git tag vX.Y.Z && git push --tags`.
 - The Go client opens a fresh TCP connection per call — SketchUp closes
   the socket after each request, so reusing a socket will hang.
 - `eval_ruby` runs arbitrary Ruby with full SketchUp API + filesystem
