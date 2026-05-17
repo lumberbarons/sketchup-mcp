@@ -1043,19 +1043,38 @@ module SU_MCP
       count = params["count"]
       raise "vector must be a 3-element array [dx,dy,dz]" unless vector.is_a?(Array) && vector.length == 3
       raise "count must be a positive integer" unless count.is_a?(Integer) && count >= 1
+      raise "vector must be non-zero; got [0,0,0]" if vector.all? { |c| c.respond_to?(:zero?) && c.zero? }
+
+      template = params["name_template"]
+      raise "name_template must be a String" unless template.nil? || template.is_a?(String)
 
       source = resolve_entity(params)
       include_source = params.key?("include_source") ? params["include_source"] : true
+
+      base, start_n = pattern_linear_naming_seed(source.name.to_s)
+      taken = pattern_linear_taken_names(Sketchup.active_model)
 
       model = Sketchup.active_model
       model.start_operation("pattern_linear", true)
       begin
         copies = []
-        (1..count).each do |k|
+        next_n = start_n
+        (1..count).each do |i|
           copy = source.copy
-          delta = Geom::Vector3d.new(vector[0] * k, vector[1] * k, vector[2] * k)
+          delta = Geom::Vector3d.new(vector[0] * i, vector[1] * i, vector[2] * i)
           copy.transform!(Geom::Transformation.translation(delta))
-          copy.name = source.name unless source.name.to_s.empty?
+          unless source.name.to_s.empty?
+            new_name, next_n = pattern_linear_copy_name(
+              template: template,
+              src: source.name.to_s,
+              base: base,
+              i: i,
+              start_n: next_n,
+              taken: taken
+            )
+            copy.name = new_name
+            taken << new_name
+          end
           copies << copy
         end
         source.erase! unless include_source
@@ -1068,6 +1087,50 @@ module SU_MCP
       rescue StandardError
         model.abort_operation
         raise
+      end
+    end
+
+    # Pure: derive base name and starting integer for auto-suffix naming.
+    # If `name` ends in an integer (with optional whitespace separator), strip
+    # it and continue the sequence at int+1. Otherwise the base is the full
+    # name and the sequence starts at 2 — that way the source (unsuffixed)
+    # plus copies "<name> 2", "<name> 3", … reads naturally.
+    def pattern_linear_naming_seed(name)
+      if (m = name.match(/\A(.*?)\s*(\d+)\z/)) && !m[1].empty?
+        [m[1], m[2].to_i + 1]
+      elsif (m = name.match(/\A(\d+)\z/))
+        ["", m[1].to_i + 1]
+      else
+        [name, 2]
+      end
+    end
+
+    # Snapshot of top-level Group names currently in the model. Used to skip
+    # collisions when auto-numbering. Pure given `model`; never mutated except
+    # by appending names as copies are created.
+    def pattern_linear_taken_names(model)
+      return [] if model.nil?
+      model.entities.grep(Sketchup::Group).map { |g| g.name.to_s }
+    end
+
+    # Pure: compute the name for the next copy. With a template, substitute
+    # placeholders and advance the sequence by 1. Without a template, find
+    # the next integer that doesn't collide with `taken` and use "<base> <n>"
+    # (or just "<n>" when base is empty). Returns [name, next_n_to_try].
+    def pattern_linear_copy_name(template:, src:, base:, i:, start_n:, taken:)
+      if template
+        n = start_n
+        name = template.gsub("{src}", src).gsub("{base}", base).gsub("{n}", n.to_s).gsub("{i}", i.to_s)
+        [name, n + 1]
+      else
+        n = start_n
+        loop do
+          candidate = base.empty? ? n.to_s : "#{base} #{n}"
+          unless taken.include?(candidate)
+            return [candidate, n + 1]
+          end
+          n += 1
+        end
       end
     end
 

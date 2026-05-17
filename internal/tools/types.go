@@ -118,11 +118,13 @@ type EvalRubyInput struct {
 // translation applied per copy; Count is the number of *additional* copies to
 // create (so a count of 3 produces 3 new groups at offsets 1×, 2×, 3×).
 // IncludeSource defaults true on the Ruby side; pass false to erase the
-// original after the copies are made.
+// original after the copies are made. NameTemplate optionally overrides the
+// auto-suffix naming default; see the tool description for placeholders.
 type PatternLinearInput struct {
 	ID            *string   `json:"id,omitempty"`
 	Name          *string   `json:"name,omitempty"`
 	Vector        []float64 `json:"vector"`
 	Count         int       `json:"count"`
 	IncludeSource *bool     `json:"include_source,omitempty"`
+	NameTemplate  *string   `json:"name_template,omitempty"`
 }

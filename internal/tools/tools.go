@@ -356,13 +356,23 @@ manifold solid Groups. delete_originals=true (default) consumes both inputs.`,
 func registerPatternLinear(srv *mcp.Server, s Sender) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "pattern_linear",
-		Description: `Replicate a top-level Group along a vector — a linear array.
+		Description: `Replicate a Group along a vector — a linear array.
 
-Address the source by exactly one of id (entityID) or name (top-level
-Group name). vector is a [dx,dy,dz] world-space offset applied per copy;
-count is the number of *additional* copies to make (count=3 produces 3
-new groups at offsets 1×, 2×, 3× along vector — the source is unchanged
-by default). Pass include_source=false to erase the original after copying.
+Address the source by exactly one of id (entityID) or name (exact match
+against a top-level Group name). Nested groups are supported when
+addressed by id; copies are placed in the source's parent entities.
+vector is a [dx,dy,dz] world-space offset applied per copy; count is the
+number of *additional* copies to make (count=3 produces 3 new groups at
+offsets 1×, 2×, 3× along vector — the source is unchanged by default).
+Pass include_source=false to erase the original after copying.
+
+Copy names: by default, copies auto-suffix to stay unique. If the source
+name ends with an integer (e.g. "Floor Joist 1"), copies continue the
+sequence ("Floor Joist 2", "Floor Joist 3", …); otherwise copies append
+" 2", " 3", …. Existing top-level group names are skipped. Override with
+name_template, which supports placeholders {src} (full source name),
+{base} (source name with trailing integer stripped), {n} (auto-incremented
+sequence number) and {i} (1-based copy index, 1..count).
 
 Returns ids of the new groups in order, plus the count actually created.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in PatternLinearInput) (*mcp.CallToolResult, any, error) {
@@ -374,6 +384,11 @@ Returns ids of the new groups in order, plus the count actually created.`,
 		if len(in.Vector) != 3 {
 			return textResult(failureEnvelope(
 				fmt.Sprintf("vector must have 3 elements [dx,dy,dz], got %d", len(in.Vector)),
+			)), nil, nil
+		}
+		if in.Vector[0] == 0 && in.Vector[1] == 0 && in.Vector[2] == 0 {
+			return textResult(failureEnvelope(
+				"vector must be non-zero; got [0,0,0]",
 			)), nil, nil
 		}
 		return callSketchup(s, "pattern_linear", in)

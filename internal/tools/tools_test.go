@@ -445,6 +445,42 @@ func TestPatternLinearRejectsBadVectorLength(t *testing.T) {
 	}
 }
 
+func TestPatternLinearRejectsZeroVector(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "pattern_linear", map[string]any{
+		"id":     "1",
+		"vector": []float64{0, 0, 0},
+		"count":  3,
+	}))
+	if env.Success {
+		t.Fatalf("want failure, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatalf("ruby side must not be called on validation failure, got %d", len(s.fake.Calls))
+	}
+}
+
+func TestPatternLinearForwardsNameTemplate(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "pattern_linear", map[string]any{
+		"name":          "Joist",
+		"vector":        []float64{0, 16, 0},
+		"count":         3,
+		"name_template": "Joist {n}",
+	})
+	mustHave(t, s.fake.lastArguments(t), "name_template", "Joist {n}")
+}
+
+func TestPatternLinearOmitsUnsetNameTemplate(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "pattern_linear", map[string]any{
+		"id":     "1",
+		"vector": []float64{1, 0, 0},
+		"count":  1,
+	})
+	mustNotHave(t, s.fake.lastArguments(t), "name_template")
+}
+
 func TestPatternLinearSurfacesIDsPayload(t *testing.T) {
 	s := newSession(t)
 	s.fake.NextResult = mcpFrame(map[string]any{
