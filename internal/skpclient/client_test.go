@@ -177,6 +177,25 @@ func TestRead_RaisesOnMalformedJSON(t *testing.T) {
 	}
 }
 
+func TestRead_RaisesMidResponseEOF(t *testing.T) {
+	c := newClient()
+	server, client := net.Pipe()
+	defer client.Close()
+
+	go func() {
+		_, _ = server.Write([]byte(`{"id":1,"result":"par`)) // truncated, no newline
+		_ = server.Close()
+	}()
+
+	_, err := c.readResponse(client)
+	if err == nil {
+		t.Fatal("want mid-response error, got nil")
+	}
+	if !strings.Contains(err.Error(), "connection dropped mid-response") {
+		t.Fatalf("want mid-response message, got %q", err.Error())
+	}
+}
+
 // -- connectWithRetries ------------------------------------------------------
 
 func TestConnect_SucceedsFirstAttempt(t *testing.T) {

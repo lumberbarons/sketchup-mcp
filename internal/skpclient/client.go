@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"strconv"
@@ -204,19 +205,26 @@ func (c *Client) sendRequest(conn net.Conn, request map[string]any) error {
 func (c *Client) readResponse(conn net.Conn) (any, error) {
 	// Both sides terminate JSON messages with '\n', so one ReadBytes = one message.
 	reader := bufio.NewReader(conn)
-	line, err := reader.ReadBytes('\n')
+	line, readErr := reader.ReadBytes('\n')
 	if len(line) == 0 {
-		if err != nil {
-			return nil, fmt.Errorf("connection closed before receiving any data: %w", err)
+		if readErr != nil {
+			return nil, fmt.Errorf("connection closed before receiving any data: %w", readErr)
 		}
 		return nil, fmt.Errorf("connection closed before receiving any data")
 	}
 	// Trim trailing newline if present; tolerate missing newline at EOF.
-	if line[len(line)-1] == '\n' {
+	hadNewline := line[len(line)-1] == '\n'
+	if hadNewline {
 		line = line[:len(line)-1]
 	}
 	var parsed any
 	if err := json.Unmarshal(line, &parsed); err != nil {
+		// A connection dropped mid-message will return bytes without a
+		// trailing newline plus io.EOF / io.ErrUnexpectedEOF. Distinguish
+		// that from genuinely malformed JSON the server sent.
+		if !hadNewline && (errors.Is(readErr, io.EOF) || errors.Is(readErr, io.ErrUnexpectedEOF)) {
+			return nil, fmt.Errorf("connection dropped mid-response (extension likely crashed or SketchUp quit) — partial bytes: %d", len(line))
+		}
 		return nil, fmt.Errorf("parse response: %w", err)
 	}
 	return parsed, nil
