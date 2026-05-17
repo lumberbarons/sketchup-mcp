@@ -336,8 +336,9 @@ module SU_MCP
       pos = params["position"] || [0,0,0]
       dims = params["dimensions"] || [1,1,1]
       name = params["name"]
+      type = params["type"] || "cube"
 
-      result = case params["type"]
+      result = case type
       when "cube"
         log "Creating cube at position #{pos.inspect} with dimensions #{dims.inspect}"
 
@@ -519,7 +520,7 @@ module SU_MCP
           raise
         end
       else
-        raise "Unknown component type: #{params["type"]}"
+        raise "Unknown component type: #{type}"
       end
 
       if name && !name.to_s.empty?

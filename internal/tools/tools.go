@@ -184,23 +184,7 @@ position: XYZ (inches) of the bounding-box minimum corner. Z extrusion is
 dimensions: [width_x, depth_y, height_z] in inches.
 Returns id and bounds {min, max} so the caller can verify placement.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in CreateComponentInput) (*mcp.CallToolResult, any, error) {
-		t := in.Type
-		if t == "" {
-			t = "cube"
-		}
-		pos := in.Position
-		if pos == nil {
-			pos = []float64{0, 0, 0}
-		}
-		dim := in.Dimensions
-		if dim == nil {
-			dim = []float64{1, 1, 1}
-		}
-		args := map[string]any{"type": t, "position": pos, "dimensions": dim}
-		if in.Name != "" {
-			args["name"] = in.Name
-		}
-		return callSketchup(s, "create_component", args)
+		return callSketchup(s, "create_component", in)
 	})
 }
 
@@ -241,14 +225,7 @@ full op vocabulary (cube, cylinder, sphere, cone, extrusion, translate,
 move_to, delete, replace). The whole batch is one undo step. Any failure
 aborts the transaction — the model is unchanged.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in BatchCreateInput) (*mcp.CallToolResult, any, error) {
-		tx := in.TransactionName
-		if tx == "" {
-			tx = "MCP batch"
-		}
-		return callSketchup(s, "batch_create", map[string]any{
-			"transaction_name": tx,
-			"operations":       in.Operations,
-		})
+		return callSketchup(s, "batch_create", in)
 	})
 }
 
@@ -282,18 +259,7 @@ geometry shape: accepts either {"op": "cube"|...} or {"type": "cube"|...}.
 "type" matches create_component's vocabulary; "op" matches batch_create's.
 Pick whichever is convenient — they're interchangeable.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in ReplaceGeometryInput) (*mcp.CallToolResult, any, error) {
-		recursive := true
-		if in.Recursive != nil {
-			recursive = *in.Recursive
-		}
-		args := map[string]any{"geometry": in.Geometry, "recursive": recursive}
-		if in.ID != nil {
-			args["id"] = *in.ID
-		}
-		if in.Name != nil {
-			args["name"] = *in.Name
-		}
-		return callSketchup(s, "replace_geometry", args)
+		return callSketchup(s, "replace_geometry", in)
 	})
 }
 
@@ -307,18 +273,7 @@ loops (outer + holes). Non-recursive: only faces in the target group's
 own entities are returned. Set include_vertices=false to drop vertex
 arrays for cheap summaries on large models.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in InspectGeometryInput) (*mcp.CallToolResult, any, error) {
-		incl := true
-		if in.IncludeVertices != nil {
-			incl = *in.IncludeVertices
-		}
-		args := map[string]any{"include_vertices": incl}
-		if in.ID != nil {
-			args["id"] = *in.ID
-		}
-		if in.Name != nil {
-			args["name"] = *in.Name
-		}
-		return callSketchup(s, "inspect_geometry", args)
+		return callSketchup(s, "inspect_geometry", in)
 	})
 }
 
@@ -335,36 +290,7 @@ pass recursive=true to also descend into nested Groups and (when
 include_components=true) ComponentInstance definitions — useful when
 named groups live inside other groups rather than at the top level.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in FindGroupsInput) (*mcp.CallToolResult, any, error) {
-		limit := 200
-		if in.Limit != nil {
-			limit = *in.Limit
-		}
-		includeComponents := false
-		if in.IncludeComponents != nil {
-			includeComponents = *in.IncludeComponents
-		}
-		recursive := false
-		if in.Recursive != nil {
-			recursive = *in.Recursive
-		}
-		args := map[string]any{
-			"limit":              limit,
-			"include_components": includeComponents,
-			"recursive":          recursive,
-		}
-		if in.NamePrefix != nil {
-			args["name_prefix"] = *in.NamePrefix
-		}
-		if in.NamePattern != nil {
-			args["name_pattern"] = *in.NamePattern
-		}
-		if in.InBounds != nil {
-			args["in_bounds"] = in.InBounds
-		}
-		if in.ParentID != nil {
-			args["parent_id"] = *in.ParentID
-		}
-		return callSketchup(s, "find_groups", args)
+		return callSketchup(s, "find_groups", in)
 	})
 }
 
@@ -393,11 +319,7 @@ func registerExportScene(srv *mcp.Server, s Sender) {
 		Name:        "export_scene",
 		Description: "Export the current scene",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in ExportSceneInput) (*mcp.CallToolResult, any, error) {
-		format := in.Format
-		if format == "" {
-			format = "skp"
-		}
-		return callSketchup(s, "export", map[string]any{"format": format})
+		return callSketchup(s, "export", in)
 	})
 }
 
@@ -418,16 +340,7 @@ manifold solid Groups. delete_originals=true (default) consumes both inputs.`,
 					" (expected union, subtract, intersect, or outer_shell)",
 			)), nil, nil
 		}
-		deleteOriginals := true
-		if in.DeleteOriginals != nil {
-			deleteOriginals = *in.DeleteOriginals
-		}
-		return callSketchup(s, "boolean_operation", map[string]any{
-			"operation":        in.Operation,
-			"target_id":        in.TargetID,
-			"tool_id":          in.ToolID,
-			"delete_originals": deleteOriginals,
-		})
+		return callSketchup(s, "boolean_operation", in)
 	})
 }
 
@@ -436,18 +349,7 @@ func registerCreateMortiseTenon(srv *mcp.Server, s Sender) {
 		Name:        "create_mortise_tenon",
 		Description: "Create a mortise and tenon joint between two components",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in CreateMortiseTenonInput) (*mcp.CallToolResult, any, error) {
-		// Match Python defaults (width=height=depth=1.0, offsets=0.0): the
-		// inbound zero-value floats already encode "default". Forward as-is.
-		return callSketchup(s, "create_mortise_tenon", map[string]any{
-			"mortise_id": in.MortiseID,
-			"tenon_id":   in.TenonID,
-			"width":      defaultFloat(in.Width, 1.0),
-			"height":     defaultFloat(in.Height, 1.0),
-			"depth":      defaultFloat(in.Depth, 1.0),
-			"offset_x":   in.OffsetX,
-			"offset_y":   in.OffsetY,
-			"offset_z":   in.OffsetZ,
-		})
+		return callSketchup(s, "create_mortise_tenon", in)
 	})
 }
 
@@ -456,23 +358,7 @@ func registerCreateDovetail(srv *mcp.Server, s Sender) {
 		Name:        "create_dovetail",
 		Description: "Create a dovetail joint between two components",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in CreateDovetailInput) (*mcp.CallToolResult, any, error) {
-		// Defaults chosen so the no-other-args call produces a buildable
-		// trapezoid: with width=2, num_tails=3, angle=15°, the per-tail
-		// spacing is 0.4; depth=0.25 keeps the flared bottom under that
-		// (0.4 + 2·0.25·tan15° ≈ 0.53). Wider depth defaults made adjacent
-		// tail bottoms overlap and SketchUp returned 'Duplicate points'.
-		return callSketchup(s, "create_dovetail", map[string]any{
-			"tail_id":   in.TailID,
-			"pin_id":    in.PinID,
-			"width":     defaultFloat(in.Width, 2.0),
-			"height":    defaultFloat(in.Height, 2.0),
-			"depth":     defaultFloat(in.Depth, 0.25),
-			"angle":     defaultFloat(in.Angle, 15.0),
-			"num_tails": defaultInt(in.NumTails, 3),
-			"offset_x":  in.OffsetX,
-			"offset_y":  in.OffsetY,
-			"offset_z":  in.OffsetZ,
-		})
+		return callSketchup(s, "create_dovetail", in)
 	})
 }
 
@@ -481,20 +367,7 @@ func registerCreateFingerJoint(srv *mcp.Server, s Sender) {
 		Name:        "create_finger_joint",
 		Description: "Create a finger joint (box joint) between two components",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in CreateFingerJointInput) (*mcp.CallToolResult, any, error) {
-		// Defaults: width=2 and num_fingers=5 give slot_width = 2/9 ≈ 0.22,
-		// well above the 1e-4 build-safe floor; depth=1 fits two adjacent
-		// 1-inch boards without overshooting their thickness.
-		return callSketchup(s, "create_finger_joint", map[string]any{
-			"board1_id":   in.Board1ID,
-			"board2_id":   in.Board2ID,
-			"width":       defaultFloat(in.Width, 2.0),
-			"height":      defaultFloat(in.Height, 2.0),
-			"depth":       defaultFloat(in.Depth, 1.0),
-			"num_fingers": defaultInt(in.NumFingers, 5),
-			"offset_x":    in.OffsetX,
-			"offset_y":    in.OffsetY,
-			"offset_z":    in.OffsetZ,
-		})
+		return callSketchup(s, "create_finger_joint", in)
 	})
 }
 
@@ -507,16 +380,3 @@ func registerEvalRuby(srv *mcp.Server, s Sender) {
 	})
 }
 
-func defaultFloat(v, fallback float64) float64 {
-	if v == 0 {
-		return fallback
-	}
-	return v
-}
-
-func defaultInt(v, fallback int) int {
-	if v == 0 {
-		return fallback
-	}
-	return v
-}

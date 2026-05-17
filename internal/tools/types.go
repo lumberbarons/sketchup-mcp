@@ -10,8 +10,9 @@ package tools
 
 // CreateComponentInput backs the create_component tool.
 //
-// position / dimensions are forwarded as defaults when omitted (the Python
-// server substitutes [0,0,0] and [1,1,1] respectively).
+// All fields use omitempty so unset values are absent on the wire; the Ruby
+// server supplies the canonical defaults (type="cube", position=[0,0,0],
+// dimensions=[1,1,1]).
 type CreateComponentInput struct {
 	Type       string    `json:"type,omitempty"`
 	Name       string    `json:"name,omitempty"`
@@ -106,8 +107,8 @@ type BooleanOpInput struct {
 }
 
 // CreateMortiseTenonInput backs the create_mortise_tenon tool. Numeric fields
-// use omitempty so the generated schema marks them optional; the handler
-// substitutes the same defaults the Python wrapper used.
+// use omitempty so unset values are absent on the wire; the Ruby server
+// supplies the canonical defaults (width=height=depth=1.0, offsets=0.0).
 type CreateMortiseTenonInput struct {
 	MortiseID string  `json:"mortise_id"`
 	TenonID   string  `json:"tenon_id"`

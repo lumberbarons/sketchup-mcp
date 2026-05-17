@@ -225,20 +225,18 @@ func TestRequestIDIsThreadedThrough(t *testing.T) {
 
 // --- create_component -------------------------------------------------------
 
-func TestCreateComponentSubstitutesDefaultsWhenOmitted(t *testing.T) {
+func TestCreateComponentOmitsUnsetArgs(t *testing.T) {
 	s := newSession(t)
 	_ = s.call(t, "create_component", map[string]any{})
 	if name := s.fake.lastToolName(t); name != "create_component" {
 		t.Fatalf("ruby tool name: %q", name)
 	}
+	// All defaults (type=cube, position=[0,0,0], dimensions=[1,1,1]) live on
+	// the Ruby side. An empty MCP call must forward an empty arguments map so
+	// Ruby — not Go — supplies the canonical default.
 	args := s.fake.lastArguments(t)
-	want := map[string]any{
-		"type":       "cube",
-		"position":   []float64{0, 0, 0},
-		"dimensions": []float64{1, 1, 1},
-	}
-	if !jsonEqual(args, want) {
-		t.Fatalf("args: got %v, want %v", args, want)
+	if !jsonEqual(args, map[string]any{}) {
+		t.Fatalf("args: got %v, want empty map", args)
 	}
 }
 
@@ -409,39 +407,25 @@ func TestToolForwardsExpectedArguments(t *testing.T) {
 			toolName:           "export_scene",
 			mcpArgs:            map[string]any{},
 			expectedRubyMethod: "export",
-			expectedRubyArgs:   map[string]any{"format": "skp"},
+			expectedRubyArgs:   map[string]any{},
 		},
 		{
 			toolName:           "create_mortise_tenon",
 			mcpArgs:            map[string]any{"mortise_id": "m", "tenon_id": "t"},
 			expectedRubyMethod: "create_mortise_tenon",
-			expectedRubyArgs: map[string]any{
-				"mortise_id": "m", "tenon_id": "t",
-				"width": 1.0, "height": 1.0, "depth": 1.0,
-				"offset_x": 0.0, "offset_y": 0.0, "offset_z": 0.0,
-			},
+			expectedRubyArgs:   map[string]any{"mortise_id": "m", "tenon_id": "t"},
 		},
 		{
 			toolName:           "create_dovetail",
 			mcpArgs:            map[string]any{"tail_id": "t", "pin_id": "p"},
 			expectedRubyMethod: "create_dovetail",
-			expectedRubyArgs: map[string]any{
-				"tail_id": "t", "pin_id": "p",
-				"width": 2.0, "height": 2.0, "depth": 0.25,
-				"angle": 15.0, "num_tails": 3,
-				"offset_x": 0.0, "offset_y": 0.0, "offset_z": 0.0,
-			},
+			expectedRubyArgs:   map[string]any{"tail_id": "t", "pin_id": "p"},
 		},
 		{
 			toolName:           "create_finger_joint",
 			mcpArgs:            map[string]any{"board1_id": "a", "board2_id": "b"},
 			expectedRubyMethod: "create_finger_joint",
-			expectedRubyArgs: map[string]any{
-				"board1_id": "a", "board2_id": "b",
-				"width": 2.0, "height": 2.0, "depth": 1.0,
-				"num_fingers": 5,
-				"offset_x":    0.0, "offset_y": 0.0, "offset_z": 0.0,
-			},
+			expectedRubyArgs:   map[string]any{"board1_id": "a", "board2_id": "b"},
 		},
 		{
 			toolName:           "eval_ruby",
@@ -453,7 +437,7 @@ func TestToolForwardsExpectedArguments(t *testing.T) {
 			toolName:           "find_groups",
 			mcpArgs:            map[string]any{},
 			expectedRubyMethod: "find_groups",
-			expectedRubyArgs:   map[string]any{"limit": 200, "include_components": false, "recursive": false},
+			expectedRubyArgs:   map[string]any{},
 		},
 	}
 
@@ -513,12 +497,7 @@ func TestFindGroupsForwardsNamePrefix(t *testing.T) {
 	if s.fake.lastToolName(t) != "find_groups" {
 		t.Fatal("tool name")
 	}
-	want := map[string]any{
-		"name_prefix":        "WA ",
-		"limit":              200,
-		"include_components": false,
-		"recursive":          false,
-	}
+	want := map[string]any{"name_prefix": "WA "}
 	if !jsonEqual(s.fake.lastArguments(t), want) {
 		t.Fatalf("args: %v", s.fake.lastArguments(t))
 	}
@@ -528,12 +507,7 @@ func TestFindGroupsForwardsNamePattern(t *testing.T) {
 	s := newSession(t)
 	pattern := `^Rafter [WE] \d+$`
 	_ = s.call(t, "find_groups", map[string]any{"name_pattern": pattern})
-	want := map[string]any{
-		"name_pattern":       pattern,
-		"limit":              200,
-		"include_components": false,
-		"recursive":          false,
-	}
+	want := map[string]any{"name_pattern": pattern}
 	if !jsonEqual(s.fake.lastArguments(t), want) {
 		t.Fatalf("args: %v", s.fake.lastArguments(t))
 	}
@@ -552,9 +526,6 @@ func TestFindGroupsForwardsInBoundsPositive(t *testing.T) {
 			"min": []float64{38, 0, 0},
 			"max": []float64{82, 3.5, 95},
 		},
-		"limit":              200,
-		"include_components": false,
-		"recursive":          false,
 	}
 	if !jsonEqual(s.fake.lastArguments(t), want) {
 		t.Fatalf("args: %v", s.fake.lastArguments(t))
@@ -598,7 +569,6 @@ func TestFindGroupsForwardsCombinedFilters(t *testing.T) {
 		"parent_id":          42,
 		"limit":              10,
 		"include_components": true,
-		"recursive":          false,
 	}
 	if !jsonEqual(s.fake.lastArguments(t), want) {
 		t.Fatalf("args: %v", s.fake.lastArguments(t))
@@ -608,11 +578,7 @@ func TestFindGroupsForwardsCombinedFilters(t *testing.T) {
 func TestFindGroupsForwardsTruncationLimit(t *testing.T) {
 	s := newSession(t)
 	_ = s.call(t, "find_groups", map[string]any{"limit": 5})
-	want := map[string]any{
-		"limit":              5,
-		"include_components": false,
-		"recursive":          false,
-	}
+	want := map[string]any{"limit": 5}
 	if !jsonEqual(s.fake.lastArguments(t), want) {
 		t.Fatalf("args: %v", s.fake.lastArguments(t))
 	}
@@ -621,11 +587,7 @@ func TestFindGroupsForwardsTruncationLimit(t *testing.T) {
 func TestFindGroupsForwardsIncludeComponents(t *testing.T) {
 	s := newSession(t)
 	_ = s.call(t, "find_groups", map[string]any{"include_components": true})
-	want := map[string]any{
-		"limit":              200,
-		"include_components": true,
-		"recursive":          false,
-	}
+	want := map[string]any{"include_components": true}
 	if !jsonEqual(s.fake.lastArguments(t), want) {
 		t.Fatalf("args: %v", s.fake.lastArguments(t))
 	}
@@ -639,16 +601,15 @@ func TestFindGroupsForwardsRecursive(t *testing.T) {
 	}
 }
 
+// Pins the post-sch-n1f contract: no Go-side default substitution for
+// find_groups. Empty MCP args ⇒ empty wire payload; the Ruby server supplies
+// the canonical limit/include_components/recursive defaults.
 func TestFindGroupsOmitsUnsetFilters(t *testing.T) {
 	s := newSession(t)
 	_ = s.call(t, "find_groups", map[string]any{})
 	args := s.fake.lastArguments(t)
-	want := map[string]any{"limit": 200, "include_components": false, "recursive": false}
-	if !jsonEqual(args, want) {
-		t.Fatalf("args: %v", args)
-	}
-	for _, k := range []string{"name_prefix", "name_pattern", "in_bounds", "parent_id"} {
-		mustNotHave(t, args, k)
+	if !jsonEqual(args, map[string]any{}) {
+		t.Fatalf("args: got %v, want empty map (Ruby supplies defaults)", args)
 	}
 }
 
@@ -746,10 +707,9 @@ func TestBooleanOpForwardsSubtract(t *testing.T) {
 		t.Fatalf("tool name: %q", s.fake.lastToolName(t))
 	}
 	want := map[string]any{
-		"operation":        "subtract",
-		"target_id":        101,
-		"tool_id":          202,
-		"delete_originals": true,
+		"operation": "subtract",
+		"target_id": 101,
+		"tool_id":   202,
 	}
 	if !jsonEqual(s.fake.lastArguments(t), want) {
 		t.Fatalf("args: %v", s.fake.lastArguments(t))
@@ -1144,9 +1104,8 @@ func TestReplaceGeometryForwardsIDAndGeometry(t *testing.T) {
 		t.Fatal("tool name")
 	}
 	want := map[string]any{
-		"id":        "123",
-		"geometry":  geometry,
-		"recursive": true,
+		"id":       "123",
+		"geometry": geometry,
 	}
 	if !jsonEqual(s.fake.lastArguments(t), want) {
 		t.Fatalf("args: %v", s.fake.lastArguments(t))
@@ -1162,7 +1121,7 @@ func TestReplaceGeometryForwardsName(t *testing.T) {
 	_ = s.call(t, "replace_geometry", map[string]any{
 		"name": "Post 1", "geometry": geometry,
 	})
-	want := map[string]any{"name": "Post 1", "geometry": geometry, "recursive": true}
+	want := map[string]any{"name": "Post 1", "geometry": geometry}
 	if !jsonEqual(s.fake.lastArguments(t), want) {
 		t.Fatalf("args: %v", s.fake.lastArguments(t))
 	}
@@ -1211,7 +1170,7 @@ func TestInspectGeometryForwardsID(t *testing.T) {
 	if s.fake.lastToolName(t) != "inspect_geometry" {
 		t.Fatal("tool name")
 	}
-	want := map[string]any{"id": "123", "include_vertices": true}
+	want := map[string]any{"id": "123"}
 	if !jsonEqual(s.fake.lastArguments(t), want) {
 		t.Fatalf("args: %v", s.fake.lastArguments(t))
 	}
@@ -1221,7 +1180,7 @@ func TestInspectGeometryForwardsID(t *testing.T) {
 func TestInspectGeometryForwardsName(t *testing.T) {
 	s := newSession(t)
 	_ = s.call(t, "inspect_geometry", map[string]any{"name": "WA Siding 1"})
-	want := map[string]any{"name": "WA Siding 1", "include_vertices": true}
+	want := map[string]any{"name": "WA Siding 1"}
 	if !jsonEqual(s.fake.lastArguments(t), want) {
 		t.Fatalf("args: %v", s.fake.lastArguments(t))
 	}
@@ -1242,9 +1201,8 @@ func TestInspectGeometryForwardsIncludeVerticesFalse(t *testing.T) {
 func TestInspectGeometryOmitsUnsetIDAndName(t *testing.T) {
 	s := newSession(t)
 	_ = s.call(t, "inspect_geometry", map[string]any{})
-	want := map[string]any{"include_vertices": true}
-	if !jsonEqual(s.fake.lastArguments(t), want) {
-		t.Fatalf("args: %v", s.fake.lastArguments(t))
+	if !jsonEqual(s.fake.lastArguments(t), map[string]any{}) {
+		t.Fatalf("args: got %v, want empty map (Ruby supplies default include_vertices=true)", s.fake.lastArguments(t))
 	}
 }
 
@@ -1275,18 +1233,15 @@ func TestBatchCreateForwardsMixedOps(t *testing.T) {
 	}
 }
 
-func TestBatchCreateDefaultsTransactionName(t *testing.T) {
+func TestBatchCreateOmitsUnsetTransactionName(t *testing.T) {
 	s := newSession(t)
 	ops := []map[string]any{
 		{"op": "sphere", "name": "Ball", "position": []float64{0, 0, 0}, "radius": 1},
 	}
 	_ = s.call(t, "batch_create", map[string]any{"operations": ops})
-	want := map[string]any{
-		"transaction_name": "MCP batch",
-		"operations":       ops,
-	}
+	want := map[string]any{"operations": ops}
 	if !jsonEqual(s.fake.lastArguments(t), want) {
-		t.Fatalf("args: %v", s.fake.lastArguments(t))
+		t.Fatalf("args: %v (Ruby supplies the canonical 'MCP batch' default)", s.fake.lastArguments(t))
 	}
 }
 
@@ -1297,10 +1252,7 @@ func TestBatchCreateNameBasedMutatesRoundTrip(t *testing.T) {
 		{"op": "delete", "id_or_name": "Old Rafter"},
 	}
 	_ = s.call(t, "batch_create", map[string]any{"operations": ops})
-	want := map[string]any{
-		"transaction_name": "MCP batch",
-		"operations":       ops,
-	}
+	want := map[string]any{"operations": ops}
 	if !jsonEqual(s.fake.lastArguments(t), want) {
 		t.Fatalf("args: %v", s.fake.lastArguments(t))
 	}
