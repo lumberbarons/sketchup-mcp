@@ -4,11 +4,6 @@ Two-process bridge that lets MCP clients drive SketchUp: a Go MCP
 server (`sketchup-mcp`) speaks JSON-RPC over a TCP socket to a Ruby
 extension (`su_mcp`) that runs inside SketchUp itself.
 
-A legacy Python implementation lives in `src/sketchup_mcp/` and is kept
-in parallel until the Go binary ships its first tagged release; both
-sides speak the same wire protocol, so either can drive the same Ruby
-extension. Treat the Go server as the primary code path for new work.
-
 ## Navigation
 
 | Directory | What | When to read |
@@ -16,14 +11,10 @@ extension. Treat the Go server as the primary code path for new work.
 | `cmd/sketchup-mcp/` | Go entry point. Builds a `SketchupClient`, probes the extension, registers tools, and serves MCP over stdio. | Changing CLI flags, startup behavior, or version stamping. |
 | `internal/skpclient/` | Go TCP client (`Client.SendCommand`, `Client.Probe`). Newline-terminated JSON-RPC 2.0, fresh connection per call, retry on connect failure only. | Debugging client/server framing or connection behavior. |
 | `internal/tools/` | Tool registrations: per-tool input struct in `types.go`, `RegisterAll` + handlers in `tools.go`, in-memory MCP wiring tests in `tools_test.go`. | Adding or changing an MCP tool from the Go side. |
-| `src/sketchup_mcp/` | Legacy Python MCP server. Same tool surface; kept in sync until the Go binary's first release. | Touching the Python implementation directly (e.g. PyPI hotfix). |
 | `su_mcp/` | SketchUp Ruby extension. `su_mcp.rb` is the loader; `su_mcp/main.rb` is the in-process TCP server and tool dispatcher. | Adding or changing the SketchUp-side handler for an MCP tool, debugging Ruby errors, modifying joinery code. |
-| `tests/` | Legacy Pytest suite for the Python server. | Maintaining the Python side. |
 | `su_mcp/test/` | Minitest suite for pure-logic helpers in the Ruby extension. `test_helper.rb` stubs the SketchUp environment so `main.rb` loads without it. | Adding tests for new pure helpers (no `Sketchup.`/`Geom.`/`UI.` calls). Use `make test-ruby`. |
-| `examples/` | Ruby snippets bundled in `.py` wrappers, demonstrating what to send through `eval_ruby`. | Looking for reusable Ruby code to pass through `eval_ruby`, or writing a new demo. |
 | `scripts/build_rbz.sh` | Build script that zips `su_mcp/` into `su_mcp_v<version>.rbz` for Extension Manager. Also runnable via `make rbz`. | Cutting a new extension build. |
 | `.goreleaser.yaml` | Cross-compile config: produces darwin/linux/windows binaries on a `v*` tag push. | Adding a release target or changing archive layout. |
-| `pyproject.toml` | Legacy Python package metadata, dependencies, ruff config. | Bumping the legacy Python package, adding a Python dep. |
 | `su_mcp/extension.json` | SketchUp extension metadata. Version lives here and is read by `build_rbz.sh`. | Bumping the extension version. |
 
 ## Common commands
@@ -32,29 +23,21 @@ extension. Treat the Go server as the primary code path for new work.
 make build          # build ./bin/sketchup-mcp (Go MCP server)
 make test-go        # Go test suite
 make lint-go        # gofmt -l + go vet
-make install        # uv sync with test + lint extras (legacy Python)
-make test           # pytest (legacy Python)
 make test-ruby      # Ruby minitest (no SketchUp required)
-make lint           # ruff check + ruff format --check (legacy Python)
-make format         # ruff + gofmt
+make format         # gofmt
 make rbz            # build the SketchUp .rbz (runs scripts/build_rbz.sh)
 ./bin/sketchup-mcp  # run the MCP server (expects extension on localhost:9876)
 ```
 
 ## Gotchas
 
-- The Go server, Python server, and Ruby extension all speak the same
-  newline-terminated JSON-RPC 2.0 framing. Don't refactor framing on one
-  side without updating the others.
+- The Go server and Ruby extension speak newline-terminated JSON-RPC 2.0
+  framing. Don't refactor framing on one side without updating the other.
 - The Go binary's version is stamped at link time (`-ldflags -X
   main.version=...`); the Ruby extension version lives in
   `su_mcp/extension.json`. Bump both together for a coordinated release.
-  The legacy Python package has its own version pair in `pyproject.toml`
-  and `src/sketchup_mcp/server.py:__version__` — keep those in sync with
-  each other but they no longer need to track the Go binary.
-- The Go and Python clients both open a fresh TCP connection per call —
-  SketchUp closes the socket after each request, so reusing a socket
-  will hang.
+- The Go client opens a fresh TCP connection per call — SketchUp closes
+  the socket after each request, so reusing a socket will hang.
 - `eval_ruby` runs arbitrary Ruby with full SketchUp API + filesystem
   access. Treat it as a trusted-client-only feature.
 - The Ruby minitest suite (`make test-ruby`) only covers helpers that don't

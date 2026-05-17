@@ -17,8 +17,8 @@ Big Shoutout to [Blender MCP](https://github.com/ahujasid/blender-mcp) for the i
 
 The system consists of two main components:
 
-1. **Sketchup Extension**: A Sketchup extension that creates a TCP server within Sketchup to receive and execute commands
-2. **MCP Server (`sketchup_mcp/server.py`)**: A Python server that implements the Model Context Protocol and connects to the Sketchup extension
+1. **Sketchup Extension** (`su_mcp/`): A Sketchup extension that creates a TCP server within Sketchup to receive and execute commands
+2. **MCP Server** (`cmd/sketchup-mcp/`): A Go server that implements the Model Context Protocol and connects to the Sketchup extension
 
 ## Requirements
 

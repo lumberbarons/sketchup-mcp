@@ -1,21 +1,3 @@
-# uv
-uv.lock
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-dist/
-*.egg-info/
-.env
-.venv
-env/
-venv/
-ENV/
-
 # Ruby
 *.gem
 *.rbc

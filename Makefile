@@ -1,18 +1,12 @@
-.PHONY: help test test-ruby test-go lint lint-go format install build rbz tidy
+.PHONY: help test-ruby test-go lint-go format build rbz tidy
 .DEFAULT_GOAL := help
 
 help:  ## Show this help message
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-install:  ## Sync Python dependencies (test + lint extras)
-	uv sync --extra test --extra lint
-
 build:  ## Build the Go MCP server binary into ./bin/sketchup-mcp
 	@mkdir -p bin
 	go build -trimpath -ldflags "-s -w -X main.version=dev" -o bin/sketchup-mcp ./cmd/sketchup-mcp
-
-test:  ## Run the pytest suite
-	uv run pytest
 
 test-go:  ## Run the Go test suite
 	go test ./... -count=1
@@ -21,10 +15,6 @@ test-ruby:  ## Run the Ruby minitest suite (no SketchUp required)
 	@find su_mcp/test -name 'test_*.rb' ! -name 'test_helper.rb' -print0 \
 		| xargs -0 -n1 ruby -Isu_mcp/test
 
-lint:  ## Check style (ruff check + ruff format --check)
-	uv run ruff check .
-	uv run ruff format --check .
-
 lint-go:  ## Run gofmt and go vet on the Go sources
 	@unformatted=$$(gofmt -l . | grep -v '^\.claude/' || true); \
 	if [ -n "$$unformatted" ]; then \
@@ -32,9 +22,7 @@ lint-go:  ## Run gofmt and go vet on the Go sources
 	fi
 	go vet ./...
 
-format:  ## Apply style fixes (ruff check --fix + ruff format + gofmt)
-	uv run ruff check --fix .
-	uv run ruff format .
+format:  ## Apply gofmt to the Go sources
 	gofmt -w $$(find . -name '*.go' -not -path './.claude/*')
 
 tidy:  ## Run go mod tidy
