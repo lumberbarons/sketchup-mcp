@@ -298,8 +298,8 @@ func registerGetSelection(srv *mcp.Server, s Sender) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "get_selection",
 		Description: "Get currently selected components",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, _ GetSelectionInput) (*mcp.CallToolResult, any, error) {
-		return callSketchup(s, "get_selection", map[string]any{})
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in GetSelectionInput) (*mcp.CallToolResult, any, error) {
+		return callSketchup(s, "get_selection", in)
 	})
 }
 
@@ -308,9 +308,7 @@ func registerSetMaterial(srv *mcp.Server, s Sender) {
 		Name:        "set_material",
 		Description: "Set material for a component",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in SetMaterialInput) (*mcp.CallToolResult, any, error) {
-		return callSketchup(s, "set_material", map[string]any{
-			"id": in.ID, "material": in.Material,
-		})
+		return callSketchup(s, "set_material", in)
 	})
 }
 
@@ -376,7 +374,7 @@ func registerEvalRuby(srv *mcp.Server, s Sender) {
 		Name:        "eval_ruby",
 		Description: "Evaluate arbitrary Ruby code in Sketchup",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in EvalRubyInput) (*mcp.CallToolResult, any, error) {
-		return callSketchup(s, "eval_ruby", map[string]any{"code": in.Code})
+		return callSketchup(s, "eval_ruby", in)
 	})
 }
 
