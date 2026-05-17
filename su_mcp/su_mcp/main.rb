@@ -1160,22 +1160,35 @@ module SU_MCP
       captured_material = target.material
       captured_layer = target.respond_to?(:layer) ? target.layer : nil
 
-      target.erase!
+      # Wrap erase + rebuild in a single SU operation so a mid-flight failure
+      # (e.g. a degenerate primitive that raises during construction) rolls
+      # back the target.erase! and leaves the original Group in the model.
+      # Without this, callers that hit a construction bug lose the source
+      # geometry permanently (sch-9d9).
+      model = Sketchup.active_model
+      model.start_operation("Replace geometry", true)
+      begin
+        target.erase!
 
-      new_group = build_replacement_group(geometry, captured_name)
+        new_group = build_replacement_group(geometry, captured_name)
 
-      # Re-apply captured attrs. Material set via assignment works on Groups;
-      # apply_material would re-pick a color, which we don't want — preserve
-      # exactly what was there.
-      new_group.material = captured_material if captured_material
-      if captured_layer && captured_layer.respond_to?(:valid?) && captured_layer.valid?
-        new_group.layer = captured_layer
+        # Re-apply captured attrs. Material set via assignment works on Groups;
+        # apply_material would re-pick a color, which we don't want — preserve
+        # exactly what was there.
+        new_group.material = captured_material if captured_material
+        if captured_layer && captured_layer.respond_to?(:valid?) && captured_layer.valid?
+          new_group.layer = captured_layer
+        end
+        new_group.name = captured_name if new_group.name != captured_name
+
+        out = bounds_result(new_group)
+        out[:name] = new_group.name
+        model.commit_operation
+        out
+      rescue StandardError
+        model.abort_operation
+        raise
       end
-      new_group.name = captured_name if new_group.name != captured_name
-
-      out = bounds_result(new_group)
-      out[:name] = new_group.name
-      out
     end
 
     # Pure: validate the geometry dict accepted by replace_geometry and the
