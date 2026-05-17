@@ -15,6 +15,14 @@
 # Go
 /bin/
 
+# Python (retired MCP server — leftover artefacts if someone re-runs a stale script)
+/src/
+/tests/
+/uv.lock
+/.venv/
+/.pytest_cache/
+/.ruff_cache/
+
 # OS specific
 .DS_Store
 .DS_Store?
