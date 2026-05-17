@@ -106,47 +106,6 @@ type BooleanOpInput struct {
 	DeleteOriginals *bool  `json:"delete_originals,omitempty"`
 }
 
-// CreateMortiseTenonInput backs the create_mortise_tenon tool. Numeric fields
-// use omitempty so unset values are absent on the wire; the Ruby server
-// supplies the canonical defaults (width=height=depth=1.0, offsets=0.0).
-type CreateMortiseTenonInput struct {
-	MortiseID string  `json:"mortise_id"`
-	TenonID   string  `json:"tenon_id"`
-	Width     float64 `json:"width,omitempty"`
-	Height    float64 `json:"height,omitempty"`
-	Depth     float64 `json:"depth,omitempty"`
-	OffsetX   float64 `json:"offset_x,omitempty"`
-	OffsetY   float64 `json:"offset_y,omitempty"`
-	OffsetZ   float64 `json:"offset_z,omitempty"`
-}
-
-// CreateDovetailInput backs the create_dovetail tool.
-type CreateDovetailInput struct {
-	TailID   string  `json:"tail_id"`
-	PinID    string  `json:"pin_id"`
-	Width    float64 `json:"width,omitempty"`
-	Height   float64 `json:"height,omitempty"`
-	Depth    float64 `json:"depth,omitempty"`
-	Angle    float64 `json:"angle,omitempty"`
-	NumTails int     `json:"num_tails,omitempty"`
-	OffsetX  float64 `json:"offset_x,omitempty"`
-	OffsetY  float64 `json:"offset_y,omitempty"`
-	OffsetZ  float64 `json:"offset_z,omitempty"`
-}
-
-// CreateFingerJointInput backs the create_finger_joint tool.
-type CreateFingerJointInput struct {
-	Board1ID   string  `json:"board1_id"`
-	Board2ID   string  `json:"board2_id"`
-	Width      float64 `json:"width,omitempty"`
-	Height     float64 `json:"height,omitempty"`
-	Depth      float64 `json:"depth,omitempty"`
-	NumFingers int     `json:"num_fingers,omitempty"`
-	OffsetX    float64 `json:"offset_x,omitempty"`
-	OffsetY    float64 `json:"offset_y,omitempty"`
-	OffsetZ    float64 `json:"offset_z,omitempty"`
-}
-
 // EvalRubyInput backs the eval_ruby tool.
 type EvalRubyInput struct {
 	Code string `json:"code"`

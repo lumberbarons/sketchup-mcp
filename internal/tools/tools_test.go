@@ -410,24 +410,6 @@ func TestToolForwardsExpectedArguments(t *testing.T) {
 			expectedRubyArgs:   map[string]any{},
 		},
 		{
-			toolName:           "create_mortise_tenon",
-			mcpArgs:            map[string]any{"mortise_id": "m", "tenon_id": "t"},
-			expectedRubyMethod: "create_mortise_tenon",
-			expectedRubyArgs:   map[string]any{"mortise_id": "m", "tenon_id": "t"},
-		},
-		{
-			toolName:           "create_dovetail",
-			mcpArgs:            map[string]any{"tail_id": "t", "pin_id": "p"},
-			expectedRubyMethod: "create_dovetail",
-			expectedRubyArgs:   map[string]any{"tail_id": "t", "pin_id": "p"},
-		},
-		{
-			toolName:           "create_finger_joint",
-			mcpArgs:            map[string]any{"board1_id": "a", "board2_id": "b"},
-			expectedRubyMethod: "create_finger_joint",
-			expectedRubyArgs:   map[string]any{"board1_id": "a", "board2_id": "b"},
-		},
-		{
 			toolName:           "eval_ruby",
 			mcpArgs:            map[string]any{"code": "1+1"},
 			expectedRubyMethod: "eval_ruby",

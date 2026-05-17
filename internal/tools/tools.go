@@ -162,9 +162,6 @@ func RegisterAll(server *mcp.Server, s Sender) {
 	registerSetMaterial(server, s)
 	registerExportScene(server, s)
 	registerBooleanOp(server, s)
-	registerCreateMortiseTenon(server, s)
-	registerCreateDovetail(server, s)
-	registerCreateFingerJoint(server, s)
 	registerEvalRuby(server, s)
 }
 
@@ -339,33 +336,6 @@ manifold solid Groups. delete_originals=true (default) consumes both inputs.`,
 			)), nil, nil
 		}
 		return callSketchup(s, "boolean_operation", in)
-	})
-}
-
-func registerCreateMortiseTenon(srv *mcp.Server, s Sender) {
-	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "create_mortise_tenon",
-		Description: "Create a mortise and tenon joint between two components",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, in CreateMortiseTenonInput) (*mcp.CallToolResult, any, error) {
-		return callSketchup(s, "create_mortise_tenon", in)
-	})
-}
-
-func registerCreateDovetail(srv *mcp.Server, s Sender) {
-	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "create_dovetail",
-		Description: "Create a dovetail joint between two components",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, in CreateDovetailInput) (*mcp.CallToolResult, any, error) {
-		return callSketchup(s, "create_dovetail", in)
-	})
-}
-
-func registerCreateFingerJoint(srv *mcp.Server, s Sender) {
-	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "create_finger_joint",
-		Description: "Create a finger joint (box joint) between two components",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, in CreateFingerJointInput) (*mcp.CallToolResult, any, error) {
-		return callSketchup(s, "create_finger_joint", in)
 	})
 }
 
