@@ -6,9 +6,11 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"reflect"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -211,6 +213,23 @@ func TestConnect_RetriesThenSucceeds(t *testing.T) {
 	_ = conn.Close()
 	if got := atomic.LoadInt32(&attempts); got != 3 {
 		t.Fatalf("want 3 attempts, got %d", got)
+	}
+}
+
+func TestConnect_FailsFastOnConnRefused(t *testing.T) {
+	c := newClient()
+	var attempts int32
+	c.Dialer = func() (net.Conn, error) {
+		atomic.AddInt32(&attempts, 1)
+		// Wrap ECONNREFUSED the way net.Dial would.
+		return nil, &net.OpError{Op: "dial", Err: &os.SyscallError{Syscall: "connect", Err: syscall.ECONNREFUSED}}
+	}
+	_, err := c.connectWithRetries(2)
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if got := atomic.LoadInt32(&attempts); got != 1 {
+		t.Fatalf("ECONNREFUSED must skip retries; got %d attempts", got)
 	}
 }
 

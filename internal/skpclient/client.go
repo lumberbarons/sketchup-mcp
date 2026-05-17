@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -37,13 +38,14 @@ type Client struct {
 	Logger *slog.Logger
 }
 
-// New returns a Client with a 15-second dial timeout and a 120-second
-// per-call timeout.
+// New returns a Client with a 3-second dial timeout (localhost: extension
+// running = connect is near-instant; extension not running = we want a
+// fast failure) and a 120-second per-call timeout.
 func New(host string, port int) *Client {
 	return &Client{
 		Host:        host,
 		Port:        port,
-		Timeout:     15 * time.Second,
+		Timeout:     3 * time.Second,
 		CallTimeout: 120 * time.Second,
 	}
 }
@@ -126,7 +128,9 @@ func wrapTimeoutErr(err error, budget time.Duration) error {
 
 func (c *Client) connectWithRetries(maxRetries int) (net.Conn, error) {
 	var lastErr error
+	attempts := 0
 	for attempt := 0; attempt <= maxRetries; attempt++ {
+		attempts++
 		conn, err := c.openSocket()
 		if err == nil {
 			return conn, nil
@@ -136,9 +140,19 @@ func (c *Client) connectWithRetries(maxRetries int) (net.Conn, error) {
 			"attempt", attempt+1,
 			"of", maxRetries+1,
 			"err", err)
+		// Connection-refused = extension is not running; retrying won't
+		// help and just delays the user-visible failure. Fail fast.
+		if isConnRefused(err) {
+			break
+		}
 	}
 	return nil, fmt.Errorf("could not connect to SketchUp at %s:%d after %d attempts: %w",
-		c.Host, c.Port, maxRetries+1, lastErr)
+		c.Host, c.Port, attempts, lastErr)
+}
+
+// isConnRefused reports whether err is a "connection refused" dial error.
+func isConnRefused(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED)
 }
 
 func (c *Client) sendRequest(conn net.Conn, request map[string]any) error {
