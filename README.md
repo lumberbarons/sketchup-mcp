@@ -261,10 +261,7 @@ Here are some examples of what you can ask Claude to do:
 
 ### Communication Protocol
 
-The system uses a simple JSON-based protocol over TCP sockets:
-
-* **Commands** are sent as JSON objects with a `type` and optional `params`
-* **Responses** are JSON objects with a `status` and `result` or `message`
+The Go server and Ruby extension speak newline-terminated JSON-RPC 2.0 over TCP (default port 9876). Each call opens a fresh connection.
 
 ## Contributing
 
