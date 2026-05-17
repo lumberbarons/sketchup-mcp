@@ -177,6 +177,27 @@ func TestRead_RaisesOnMalformedJSON(t *testing.T) {
 	}
 }
 
+func TestRead_ToleratesMissingTrailingNewline(t *testing.T) {
+	c := newClient()
+	server, client := net.Pipe()
+	defer client.Close()
+
+	go func() {
+		// Valid, complete JSON but no trailing '\n' before close.
+		_, _ = server.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"ok"}`))
+		_ = server.Close()
+	}()
+
+	got, err := c.readResponse(client)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]any{"jsonrpc": "2.0", "id": float64(1), "result": "ok"}
+	if !jsonEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
 func TestRead_RaisesMidResponseEOF(t *testing.T) {
 	c := newClient()
 	server, client := net.Pipe()
