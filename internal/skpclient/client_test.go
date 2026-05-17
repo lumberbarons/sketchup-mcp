@@ -436,6 +436,44 @@ func TestSend_SerialisesRequestAndUnwrapsResult(t *testing.T) {
 	}
 }
 
+func TestSend_NilParamsSerializesAsEmptyObject(t *testing.T) {
+	c := newClient()
+	server, client := net.Pipe()
+	drainCh := make(chan []byte, 1)
+	go func() {
+		defer server.Close()
+		reader := bufio.NewReader(server)
+		line, _ := reader.ReadBytes('\n')
+		drainCh <- line
+		_, _ = server.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"ok"}` + "\n"))
+	}()
+	c.Dialer = func() (net.Conn, error) { return client, nil }
+
+	if _, err := c.SendCommand("noop", nil, float64(1)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	line := <-drainCh
+	if len(line) == 0 || line[len(line)-1] != '\n' {
+		t.Fatalf("expected newline-terminated payload, got %q", line)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(line[:len(line)-1], &decoded); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	params, ok := decoded["params"]
+	if !ok {
+		t.Fatal("envelope must include params key for nil-params call")
+	}
+	m, ok := params.(map[string]any)
+	if !ok {
+		t.Fatalf("params must be a JSON object, got %T", params)
+	}
+	if len(m) != 0 {
+		t.Fatalf("params must be {}, got %v", m)
+	}
+}
+
 func TestSend_PropagatesSketchupErrorEnvelope(t *testing.T) {
 	c := newClient()
 	server, client := net.Pipe()
