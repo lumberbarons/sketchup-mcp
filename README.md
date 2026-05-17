@@ -16,9 +16,24 @@ transform geometry and it drives SketchUp directly.
 
 ## Installation
 
-### MCP server binary
+### Quick install (macOS / Linux)
 
-Download the latest archive for your platform from the
+One command fetches the matching binary and `.rbz` from the latest release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lumberbarons/sketchup-mcp/main/install.sh | bash
+```
+
+This installs `sketchup-mcp` to `/usr/local/bin` (or `~/.local/bin` if
+the former isn't writable) and drops `su_mcp_v<version>.rbz` into
+`~/Downloads/`. The script prints next steps for installing the `.rbz`
+in SketchUp. Pin a specific release with
+`SKETCHUP_MCP_VERSION=vX.Y.Z`, or override paths with `INSTALL_DIR=`
+and `RBZ_DIR=`.
+
+### Manual install
+
+Download the archive for your platform from the
 [GitHub Releases](https://github.com/lumberbarons/sketchup-mcp/releases)
 page, extract it, and put the `sketchup-mcp` binary somewhere on your
 `PATH`. The binary is a single static file — no runtime needed.
@@ -31,15 +46,17 @@ go install github.com/lumberbarons/sketchup-mcp/cmd/sketchup-mcp@latest
 
 ### SketchUp extension
 
-1. Download `su_mcp_v<version>.rbz` from the same
-   [GitHub Releases](https://github.com/lumberbarons/sketchup-mcp/releases)
-   archive that ships the server binary.
-2. In SketchUp, go to **Window > Extension Manager**.
-3. Click **Install Extension** and select the `.rbz` file.
-4. Restart SketchUp.
+The quick-install script above downloads the `.rbz` for you. If you're
+installing manually, grab `su_mcp_v<version>.rbz` from the
+[release assets](https://github.com/lumberbarons/sketchup-mcp/releases),
+or build it locally with `make rbz` (produces `su_mcp_v<version>.rbz`
+in the repo root from `su_mcp/extension.json`).
 
-To build the extension from source instead, run `make rbz` in this
-repo — it produces `su_mcp_v<version>.rbz` in the repo root.
+Then in SketchUp:
+
+1. Window → Extension Manager
+2. Click "Install Extension" and select the `.rbz` file
+3. Restart SketchUp
 
 ## Usage
 
