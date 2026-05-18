@@ -248,8 +248,132 @@ symmetric or repeating structures in one transaction:
     include_source (default true; pass false to flip the source in
     place), name_template.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in BatchCreateInput) (*mcp.CallToolResult, any, error) {
+		if err := validateBatchOps(in.Operations); err != nil {
+			return textResult(failureEnvelope(err.Error())), nil, nil
+		}
 		return callSketchup(s, "batch_create", in)
 	})
+}
+
+// validateBatchOps applies the same Go-side pre-flight validation the
+// standalone tools run, for ops that have a typed standalone counterpart.
+// Without this, a malformed pattern_linear or mirror op inside batch_create
+// would only fail Ruby-side — after start_operation has run — wasting a
+// transaction round-trip. Ops without a standalone validator (cube,
+// extrusion, translate, …) are left to the Ruby side as before.
+func validateBatchOps(ops []map[string]any) error {
+	for i, op := range ops {
+		opName, _ := op["op"].(string)
+		var err error
+		switch opName {
+		case "pattern_linear":
+			err = validatePatternLinearOp(op)
+		case "mirror":
+			err = validateMirrorOp(op)
+		}
+		if err != nil {
+			return fmt.Errorf("operation #%d (%q): %s", i, opName, err.Error())
+		}
+	}
+	return nil
+}
+
+// validatePatternLinearOp checks the wire-shape of a pattern_linear op
+// inside batch_create. Mirrors the rules registerPatternLinear enforces on
+// the typed input struct: count >= 1, vector length 3, vector non-zero.
+// JSON numbers arrive as float64 over the MCP transport.
+func validatePatternLinearOp(op map[string]any) error {
+	countAny, ok := op["count"]
+	if !ok {
+		return fmt.Errorf("count is required")
+	}
+	count, ok := countAny.(float64)
+	if !ok {
+		return fmt.Errorf("count must be a number, got %T", countAny)
+	}
+	if int(count) < 1 {
+		return fmt.Errorf("count must be >= 1, got %v", count)
+	}
+	vec, ok := op["vector"].([]any)
+	if !ok {
+		return fmt.Errorf("vector must be [dx,dy,dz]")
+	}
+	if len(vec) != 3 {
+		return fmt.Errorf("vector must have 3 elements [dx,dy,dz], got %d", len(vec))
+	}
+	var dx, dy, dz float64
+	for i, v := range vec {
+		f, ok := v.(float64)
+		if !ok {
+			return fmt.Errorf("vector[%d] must be a number, got %T", i, v)
+		}
+		switch i {
+		case 0:
+			dx = f
+		case 1:
+			dy = f
+		case 2:
+			dz = f
+		}
+	}
+	if dx == 0 && dy == 0 && dz == 0 {
+		return fmt.Errorf("vector must be non-zero; got [0,0,0]")
+	}
+	return nil
+}
+
+// validateMirrorOp checks the wire-shape of a mirror op inside batch_create.
+// Mirrors validateMirrorPlane's rules on the typed input struct: exactly one
+// of (axis+offset) or plane; axis ∈ {x,y,z}; plane.{origin,normal} length 3;
+// plane.normal non-zero.
+func validateMirrorOp(op map[string]any) error {
+	_, hasAxis := op["axis"]
+	_, hasPlane := op["plane"]
+	if hasAxis && hasPlane {
+		return fmt.Errorf("provide exactly one of axis+offset or plane, not both")
+	}
+	if !hasAxis && !hasPlane {
+		return fmt.Errorf("provide a mirror plane: axis+offset or plane {origin, normal}")
+	}
+	if hasAxis {
+		axis, ok := op["axis"].(string)
+		if !ok {
+			return fmt.Errorf("axis must be a string")
+		}
+		switch axis {
+		case "x", "y", "z":
+		default:
+			return fmt.Errorf("axis must be \"x\", \"y\", or \"z\"; got %q", axis)
+		}
+		if _, ok := op["offset"].(float64); !ok {
+			return fmt.Errorf("offset (numeric) is required with axis")
+		}
+	}
+	if hasPlane {
+		plane, ok := op["plane"].(map[string]any)
+		if !ok {
+			return fmt.Errorf("plane must be a {origin, normal} object")
+		}
+		for _, key := range []string{"origin", "normal"} {
+			vec, ok := plane[key].([]any)
+			if !ok {
+				return fmt.Errorf("plane.%s must be [x,y,z] numerics", key)
+			}
+			if len(vec) != 3 {
+				return fmt.Errorf("plane.%s must have 3 elements, got %d", key, len(vec))
+			}
+			for i, v := range vec {
+				if _, ok := v.(float64); !ok {
+					return fmt.Errorf("plane.%s[%d] must be a number, got %T", key, i, v)
+				}
+			}
+		}
+		nrm := plane["normal"].([]any)
+		if nrm[0].(float64) == 0 && nrm[1].(float64) == 0 && nrm[2].(float64) == 0 {
+			return fmt.Errorf("plane.normal must be non-zero; got [0,0,0]")
+		}
+	}
+	return nil
 }
 
 func registerCreateExtrusion(srv *mcp.Server, s Sender) {

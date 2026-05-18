@@ -1652,6 +1652,160 @@ func TestBatchCreateForwardsMirrorOp(t *testing.T) {
 	}
 }
 
+// --- batch_create pre-flight validation -------------------------------------
+//
+// pattern_linear and mirror ops carry the same validation rules as their
+// standalone counterparts. Without pre-flight on batch_create, a malformed
+// op would only fail Ruby-side after start_operation has run — wasting an
+// abort cycle. These tests pin that pre-flight rejection.
+
+func TestBatchCreateRejectsPatternLinearZeroCount(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "batch_create", map[string]any{
+		"operations": []map[string]any{
+			{"op": "cube", "name": "S", "position": []float64{0, 0, 0}, "dimensions": []float64{1, 1, 1}},
+			{"op": "pattern_linear", "name": "S", "vector": []float64{1, 0, 0}, "count": 0},
+		},
+	}))
+	if env.Success {
+		t.Fatalf("want failure, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatalf("Ruby must not be called on validation failure, got %d", len(s.fake.Calls))
+	}
+	msg, _ := env.Error.(string)
+	if !strings.Contains(msg, "operation #1") || !strings.Contains(msg, "count") {
+		t.Fatalf("error should identify failing op and field: %q", msg)
+	}
+}
+
+func TestBatchCreateRejectsPatternLinearZeroVector(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "batch_create", map[string]any{
+		"operations": []map[string]any{
+			{"op": "pattern_linear", "name": "S", "vector": []float64{0, 0, 0}, "count": 3},
+		},
+	}))
+	if env.Success {
+		t.Fatalf("want failure, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatal("Ruby must not be called")
+	}
+}
+
+func TestBatchCreateRejectsPatternLinearBadVectorLength(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "batch_create", map[string]any{
+		"operations": []map[string]any{
+			{"op": "pattern_linear", "name": "S", "vector": []float64{1, 0}, "count": 3},
+		},
+	}))
+	if env.Success {
+		t.Fatalf("want failure, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatal("Ruby must not be called")
+	}
+}
+
+func TestBatchCreateRejectsMirrorBothAxisAndPlane(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "batch_create", map[string]any{
+		"operations": []map[string]any{
+			{
+				"op": "mirror", "name": "S",
+				"axis": "x", "offset": 0,
+				"plane": map[string]any{"origin": []float64{0, 0, 0}, "normal": []float64{1, 0, 0}},
+			},
+		},
+	}))
+	if env.Success {
+		t.Fatalf("want failure, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatal("Ruby must not be called")
+	}
+}
+
+func TestBatchCreateRejectsMirrorNeitherForm(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "batch_create", map[string]any{
+		"operations": []map[string]any{
+			{"op": "mirror", "name": "S"},
+		},
+	}))
+	if env.Success {
+		t.Fatalf("want failure, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatal("Ruby must not be called")
+	}
+}
+
+func TestBatchCreateRejectsMirrorBadAxis(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "batch_create", map[string]any{
+		"operations": []map[string]any{
+			{"op": "mirror", "name": "S", "axis": "w", "offset": 0},
+		},
+	}))
+	if env.Success {
+		t.Fatalf("want failure, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatal("Ruby must not be called")
+	}
+}
+
+func TestBatchCreateRejectsMirrorAxisMissingOffset(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "batch_create", map[string]any{
+		"operations": []map[string]any{
+			{"op": "mirror", "name": "S", "axis": "x"},
+		},
+	}))
+	if env.Success {
+		t.Fatalf("want failure, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatal("Ruby must not be called")
+	}
+}
+
+func TestBatchCreateRejectsMirrorZeroNormal(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "batch_create", map[string]any{
+		"operations": []map[string]any{
+			{
+				"op": "mirror", "name": "S",
+				"plane": map[string]any{"origin": []float64{0, 0, 0}, "normal": []float64{0, 0, 0}},
+			},
+		},
+	}))
+	if env.Success {
+		t.Fatalf("want failure, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatal("Ruby must not be called")
+	}
+}
+
+// Pre-flight must not interfere with valid op sequences.
+func TestBatchCreateAcceptsValidPatternAndMirror(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "batch_create", map[string]any{
+		"operations": []map[string]any{
+			{"op": "cube", "name": "S", "position": []float64{0, 0, 0}, "dimensions": []float64{1, 1, 1}},
+			{"op": "pattern_linear", "name": "S", "vector": []float64{16, 0, 0}, "count": 5},
+			{"op": "mirror", "name": "S", "axis": "x", "offset": 60.5},
+		},
+	})
+	if len(s.fake.Calls) != 1 {
+		t.Fatalf("Ruby should be called exactly once, got %d", len(s.fake.Calls))
+	}
+}
+
 func TestBatchCreatePreservesOpOrder(t *testing.T) {
 	s := newSession(t)
 	ops := []map[string]any{
