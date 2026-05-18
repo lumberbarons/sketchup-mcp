@@ -166,6 +166,7 @@ func RegisterAll(server *mcp.Server, s Sender) {
 	registerMirrorComponent(server, s)
 	registerValidateGeometry(server, s)
 	registerIntersectRay(server, s)
+	registerClosestPoints(server, s)
 	registerEvalRuby(server, s)
 }
 
@@ -773,6 +774,80 @@ func validateIntersectRayInput(in IntersectRayInput) error {
 	}
 	if in.MaxDistance != nil && *in.MaxDistance <= 0 {
 		return fmt.Errorf("max_distance must be > 0 when supplied; got %v", *in.MaxDistance)
+	}
+	return nil
+}
+
+func registerClosestPoints(srv *mcp.Server, s Sender) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "closest_points",
+		Description: `Return the pair of points on two groups' surfaces with the
+minimum separation — the read-only "are these touching / how close" query.
+
+Address each group by exact top-level name (string) or entity ID (integer).
+The same target may be addressed differently on each side (name on one,
+id on the other) — they're resolved the same way validate_geometry does.
+
+tolerance: optional inches; a surface gap within tolerance is reported as
+"contact". Default 0.0625" (1/16"). Status thresholds:
+  - distance >  tolerance              → "clear"
+  - distance <= tolerance, no interior → "contact"
+  - interiors penetrate                → "overlap" (distance returned negative)
+
+Returns {distance, point_a:[x,y,z], point_b:[x,y,z], status, face_a_id,
+face_b_id}. distance is signed: positive for a gap, negative for
+penetration depth (estimated via AABB axis-min penetration), 0 for a tight
+contact. point_a / point_b are world-space points on the respective
+surfaces; on a tight contact they coincide. face_a_id / face_b_id are the
+entity IDs of the faces holding the closest points.
+
+This is the domain-portable complement to intersect_ray: instead of
+"where does this ray hit?", it answers "are these two parts where I
+think they are?" — clearance between a drawer side and cabinet frame,
+roof-lookout-to-fly-rafter contact, tenon shoulder seating, packaging gap.
+
+Costs ~O(Na × Nb) triangle-pair tests over the two groups' polygonal
+meshes. For typical framing / furniture pieces (~12 faces each) that is
+trivial; if you call this against meshes with thousands of faces a future
+BVH-accelerated path may be needed.`,
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in ClosestPointsInput) (*mcp.CallToolResult, any, error) {
+		if err := validateClosestPointsInput(in); err != nil {
+			return textResult(failureEnvelope(err.Error())), nil, nil
+		}
+		return callSketchup(s, "closest_points", in)
+	})
+}
+
+// validateClosestPointsInput rejects the obviously-broken shapes before the
+// Ruby round-trip: missing targets, wrong types, non-positive tolerance.
+// Per-group resolution (name not found, multiple matches, etc.) still
+// surfaces from the Ruby side where the model is live.
+func validateClosestPointsInput(in ClosestPointsInput) error {
+	if err := validateClosestPointsTarget("a", in.A); err != nil {
+		return err
+	}
+	if err := validateClosestPointsTarget("b", in.B); err != nil {
+		return err
+	}
+	if in.Tolerance != nil && *in.Tolerance < 0 {
+		return fmt.Errorf("tolerance must be >= 0 when supplied; got %v", *in.Tolerance)
+	}
+	return nil
+}
+
+func validateClosestPointsTarget(label string, target any) error {
+	if target == nil {
+		return fmt.Errorf("%s is required (group name string or entity id integer)", label)
+	}
+	switch v := target.(type) {
+	case string:
+		if v == "" {
+			return fmt.Errorf("%s must be a non-empty string or an integer id", label)
+		}
+	case float64, float32, int, int32, int64:
+		// numeric ids are fine; JSON unmarshals numbers as float64
+	default:
+		return fmt.Errorf("%s must be a string (group name) or integer (entity id), got %T", label, target)
 	}
 	return nil
 }

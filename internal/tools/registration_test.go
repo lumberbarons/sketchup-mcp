@@ -51,6 +51,7 @@ func TestRegisterAll_ExposesExpectedToolNames(t *testing.T) {
 	want := []string{
 		"batch_create",
 		"boolean_op",
+		"closest_points",
 		"create_component",
 		"create_extrusion",
 		"delete_component",

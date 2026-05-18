@@ -186,6 +186,20 @@ type IntersectRayInput struct {
 	IncludeBackFaces *bool     `json:"include_back_faces,omitempty"`
 }
 
+// ClosestPointsInput backs the closest_points tool.
+//
+// A and B address two groups by exact name (string) or entity ID (integer);
+// the Ruby side resolves either form through resolve_validate_target, the
+// same helper validate_geometry uses. Tolerance (inches) is the threshold
+// for the "contact" classification — a surface gap within tolerance is
+// treated as touching; default 0.0625" (1/16"), set by the Ruby side when
+// the field is omitted.
+type ClosestPointsInput struct {
+	A         any      `json:"a,omitempty"`
+	B         any      `json:"b,omitempty"`
+	Tolerance *float64 `json:"tolerance,omitempty"`
+}
+
 // MirrorComponentInput backs the mirror_component tool.
 //
 // Address the source by exactly one of ID or Name. The mirror plane is given

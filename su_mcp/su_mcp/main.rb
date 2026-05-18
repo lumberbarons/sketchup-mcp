@@ -252,6 +252,8 @@ module SU_MCP
           validate_geometry(args)
         when "intersect_ray"
           intersect_ray(args)
+        when "closest_points"
+          closest_points(args)
         when "chamfer_edges"
           chamfer_edges(args)
         when "fillet_edges"
@@ -1790,6 +1792,317 @@ module SU_MCP
         point[1] + unit_dir[1] * INTERSECT_RAY_EPS,
         point[2] + unit_dir[2] * INTERSECT_RAY_EPS
       ]
+    end
+
+    # Maximum face-pair triangle tests allowed before closest_points bails
+    # out. Each typical framing / furniture group has ~12 faces ⇒ ~24 tris;
+    # a pair-wise loop is ~576 tri pairs. The cap protects against running
+    # this against meshes with thousands of faces where a BVH would be
+    # needed — caller gets a clear error rather than a hang.
+    CLOSEST_POINTS_MAX_TRI_PAIRS = 500_000
+
+    def closest_points(params)
+      log "closest_points params: #{params.inspect}"
+      model = Sketchup.active_model
+      raise "no active model" unless model
+
+      ent_a = resolve_validate_target(params["a"], model)
+      ent_b = resolve_validate_target(params["b"], model)
+      tol = (params["tolerance"] || DEFAULT_VALIDATE_TOLERANCE).to_f
+      raise "tolerance must be >= 0" if tol < 0
+
+      tris_a = world_triangles_for_group(ent_a)
+      tris_b = world_triangles_for_group(ent_b)
+      raise "group 'a' has no faces to measure" if tris_a.empty?
+      raise "group 'b' has no faces to measure" if tris_b.empty?
+
+      pair_count = tris_a.length * tris_b.length
+      if pair_count > CLOSEST_POINTS_MAX_TRI_PAIRS
+        raise "too many triangle pairs (#{pair_count}); closest_points refuses to scan meshes this dense"
+      end
+
+      best = closest_points_search(tris_a, tris_b)
+
+      # AABB axis-overlap classifies the "is this penetrating?" case. We
+      # treat genuine interior penetration as overlap with a negative
+      # signed distance whose magnitude is the minimum positive
+      # axis-penetration depth — a useful "by how much" estimate without
+      # the cost of a full minimum-translation-vector computation.
+      a_bounds = ent_a.bounds
+      b_bounds = ent_b.bounds
+      ox, oy, oz = aabb_overlap_extents(a_bounds.min, a_bounds.max, b_bounds.min, b_bounds.max)
+      aabb_strict_overlap = ox > tol && oy > tol && oz > tol
+
+      surface_distance = best[:distance]
+      status, signed_distance =
+        if surface_distance > tol
+          ["clear", surface_distance]
+        elsif aabb_strict_overlap
+          depth = aabb_penetration_depth(ox, oy, oz)
+          ["overlap", -depth]
+        else
+          ["contact", surface_distance]
+        end
+
+      {
+        success: true,
+        distance: signed_distance,
+        point_a: best[:point_a],
+        point_b: best[:point_b],
+        status: status,
+        face_a_id: best[:face_a_id],
+        face_b_id: best[:face_b_id]
+      }
+    end
+
+    # Pure: positive minimum AABB axis-penetration depth. Used to give the
+    # "by how much do these overlap?" estimate in closest_points' overlap
+    # branch. Inputs are the per-axis penetration extents from
+    # aabb_overlap_extents (positive = boxes overlap on that axis).
+    def aabb_penetration_depth(ox, oy, oz)
+      [ox, oy, oz].select { |v| v > 0 }.min || 0.0
+    end
+
+    # Walk a Group / ComponentInstance recursively, collecting every face's
+    # triangles in world coordinates. Returns an array of
+    # {points: [[x,y,z]*3], face_id: <int>} hashes; closest_points loops
+    # over the cartesian product of two such arrays.
+    #
+    # Nested groups / instances are descended; transforms compose along the
+    # path so a face inside a nested instance reports world-space points.
+    def world_triangles_for_group(entity)
+      out = []
+      collect_world_triangles(entity, Geom::Transformation.new, out)
+      out
+    end
+
+    def collect_world_triangles(entity, accum_transform, out)
+      ents =
+        if entity.respond_to?(:definition) && entity.definition.respond_to?(:entities)
+          entity.definition.entities
+        elsif entity.respond_to?(:entities)
+          entity.entities
+        else
+          return
+        end
+      composed = accum_transform
+      composed = accum_transform * entity.transformation if entity.respond_to?(:transformation)
+      ents.each do |child|
+        case child
+        when Sketchup::Face
+          mesh = child.mesh
+          mesh.polygons.each do |poly|
+            next unless poly.length >= 3
+            idxs = poly.first(3).map(&:abs)
+            pts = idxs.map do |i|
+              p = mesh.point_at(i).transform(composed)
+              [p.x.to_f, p.y.to_f, p.z.to_f]
+            end
+            out << { points: pts, face_id: child.entityID }
+          end
+        when Sketchup::Group, Sketchup::ComponentInstance
+          collect_world_triangles(child, composed, out)
+        end
+      end
+    end
+
+    # Pure-but-loops: scan every triangle pair, track the best (smallest
+    # surface distance) hit. Returns {distance, point_a, point_b,
+    # face_a_id, face_b_id}. Inputs are arrays of {points, face_id}
+    # produced by world_triangles_for_group; tests drive this directly.
+    def closest_points_search(tris_a, tris_b)
+      best_d = Float::INFINITY
+      best = { distance: best_d }
+      tris_a.each do |ta|
+        tris_b.each do |tb|
+          dist, pa, pb = triangle_triangle_min_distance(ta[:points], tb[:points])
+          if dist < best_d
+            best_d = dist
+            best = {
+              distance: dist,
+              point_a: pa,
+              point_b: pb,
+              face_a_id: ta[:face_id],
+              face_b_id: tb[:face_id]
+            }
+            # An exact zero (interpenetration or shared point) is as good
+            # as it gets — short-circuit the rest of the search.
+            return best if dist == 0.0
+          end
+        end
+      end
+      best
+    end
+
+    # Pure: minimum distance between two triangles in 3D, with the points
+    # that realize it. Returns [distance, point_on_t1, point_on_t2]. Each
+    # triangle is an array of three [x,y,z] points.
+    #
+    # The algorithm tests every vertex-against-triangle and every
+    # edge-against-edge pair, keeping the smallest. This is the textbook
+    # non-intersecting case; when triangles intersect the smallest
+    # vertex/edge distance will be ~0, which captures the situation well
+    # enough for clearance / contact / overlap classification.
+    def triangle_triangle_min_distance(t1, t2)
+      best_dsq = Float::INFINITY
+      best_a = nil
+      best_b = nil
+
+      t1.each do |v|
+        dsq, c = point_triangle_distance_sq(v, t2)
+        if dsq < best_dsq
+          best_dsq = dsq
+          best_a = v
+          best_b = c
+        end
+      end
+      t2.each do |v|
+        dsq, c = point_triangle_distance_sq(v, t1)
+        if dsq < best_dsq
+          best_dsq = dsq
+          best_a = c
+          best_b = v
+        end
+      end
+
+      [[t1[0], t1[1]], [t1[1], t1[2]], [t1[2], t1[0]]].each do |e1|
+        [[t2[0], t2[1]], [t2[1], t2[2]], [t2[2], t2[0]]].each do |e2|
+          dsq, ca, cb = segment_segment_distance_sq(e1[0], e1[1], e2[0], e2[1])
+          if dsq < best_dsq
+            best_dsq = dsq
+            best_a = ca
+            best_b = cb
+          end
+        end
+      end
+
+      [Math.sqrt(best_dsq), best_a, best_b]
+    end
+
+    # Pure: minimum squared distance from point p to triangle (a,b,c).
+    # Returns [distance_sq, closest_point_on_triangle]. Standard
+    # barycentric-region algorithm from Ericson, "Real-Time Collision
+    # Detection" §5.1.5: project p onto the triangle's plane, locate the
+    # projection in one of seven regions (interior, three vertex regions,
+    # three edge regions), and snap to the nearest feature.
+    def point_triangle_distance_sq(p, tri)
+      a, b, c = tri[0], tri[1], tri[2]
+
+      ab = vec3_sub(b, a)
+      ac = vec3_sub(c, a)
+      ap = vec3_sub(p, a)
+      d1 = vec3_dot(ab, ap)
+      d2 = vec3_dot(ac, ap)
+      if d1 <= 0.0 && d2 <= 0.0
+        return [vec3_dist_sq(p, a), a]
+      end
+
+      bp = vec3_sub(p, b)
+      d3 = vec3_dot(ab, bp)
+      d4 = vec3_dot(ac, bp)
+      if d3 >= 0.0 && d4 <= d3
+        return [vec3_dist_sq(p, b), b]
+      end
+
+      vc = d1 * d4 - d3 * d2
+      if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0
+        v = d1 / (d1 - d3)
+        proj = vec3_add(a, vec3_scale(ab, v))
+        return [vec3_dist_sq(p, proj), proj]
+      end
+
+      cp = vec3_sub(p, c)
+      d5 = vec3_dot(ab, cp)
+      d6 = vec3_dot(ac, cp)
+      if d6 >= 0.0 && d5 <= d6
+        return [vec3_dist_sq(p, c), c]
+      end
+
+      vb = d5 * d2 - d1 * d6
+      if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0
+        w = d2 / (d2 - d6)
+        proj = vec3_add(a, vec3_scale(ac, w))
+        return [vec3_dist_sq(p, proj), proj]
+      end
+
+      va = d3 * d6 - d5 * d4
+      if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0
+        w = (d4 - d3) / ((d4 - d3) + (d5 - d6))
+        proj = vec3_add(b, vec3_scale(vec3_sub(c, b), w))
+        return [vec3_dist_sq(p, proj), proj]
+      end
+
+      denom = 1.0 / (va + vb + vc)
+      v = vb * denom
+      w = vc * denom
+      proj = vec3_add(a, vec3_add(vec3_scale(ab, v), vec3_scale(ac, w)))
+      [vec3_dist_sq(p, proj), proj]
+    end
+
+    # Pure: minimum squared distance between two line segments p1-p2 and
+    # q1-q2. Returns [distance_sq, closest_on_seg1, closest_on_seg2].
+    # Standard parametric-clamp algorithm — robust to degenerate (zero-
+    # length) segments.
+    def segment_segment_distance_sq(p1, p2, q1, q2)
+      d1 = vec3_sub(p2, p1)
+      d2 = vec3_sub(q2, q1)
+      r = vec3_sub(p1, q1)
+      a = vec3_dot(d1, d1)
+      e = vec3_dot(d2, d2)
+      f = vec3_dot(d2, r)
+
+      eps = 1.0e-30
+      if a <= eps && e <= eps
+        return [vec3_dist_sq(p1, q1), p1, q1]
+      end
+
+      if a <= eps
+        s = 0.0
+        t = (f / e).clamp(0.0, 1.0)
+      else
+        c = vec3_dot(d1, r)
+        if e <= eps
+          t = 0.0
+          s = (-c / a).clamp(0.0, 1.0)
+        else
+          b = vec3_dot(d1, d2)
+          denom = a * e - b * b
+          s = denom != 0.0 ? (((b * f) - (c * e)) / denom).clamp(0.0, 1.0) : 0.0
+          t = (b * s + f) / e
+          if t < 0.0
+            t = 0.0
+            s = (-c / a).clamp(0.0, 1.0)
+          elsif t > 1.0
+            t = 1.0
+            s = ((b - c) / a).clamp(0.0, 1.0)
+          end
+        end
+      end
+
+      cp = vec3_add(p1, vec3_scale(d1, s))
+      cq = vec3_add(q1, vec3_scale(d2, t))
+      [vec3_dist_sq(cp, cq), cp, cq]
+    end
+
+    # Pure 3-vector helpers used by point_triangle_distance_sq and
+    # segment_segment_distance_sq. Kept tiny and free of allocations beyond
+    # the result so the inner loops stay quick. vec3_dot lives up with
+    # intersect_ray's helper section.
+    def vec3_sub(a, b)
+      [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+    end
+
+    def vec3_add(a, b)
+      [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+    end
+
+    def vec3_scale(a, s)
+      [a[0] * s, a[1] * s, a[2] * s]
+    end
+
+    def vec3_dist_sq(a, b)
+      dx = a[0] - b[0]; dy = a[1] - b[1]; dz = a[2] - b[2]
+      dx * dx + dy * dy + dz * dz
     end
 
     def inspect_geometry(params)

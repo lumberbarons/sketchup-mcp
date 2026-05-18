@@ -927,6 +927,139 @@ func TestIntersectRaySurfacesMissReason(t *testing.T) {
 	}
 }
 
+// --- closest_points ---------------------------------------------------------
+
+func TestClosestPointsForwardsMinimumArgs(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "closest_points", map[string]any{
+		"a": "Lookout FW 1",
+		"b": "Rafter W Fly F",
+	})
+	if s.fake.lastToolName(t) != "closest_points" {
+		t.Fatalf("tool name: %q", s.fake.lastToolName(t))
+	}
+	args := s.fake.lastArguments(t)
+	mustHave(t, args, "a", "Lookout FW 1")
+	mustHave(t, args, "b", "Rafter W Fly F")
+	mustNotHave(t, args, "tolerance")
+}
+
+func TestClosestPointsForwardsNumericTargets(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "closest_points", map[string]any{
+		"a": float64(1234),
+		"b": float64(5678),
+	})
+	args := s.fake.lastArguments(t)
+	mustHave(t, args, "a", float64(1234))
+	mustHave(t, args, "b", float64(5678))
+}
+
+func TestClosestPointsForwardsMixedTargets(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "closest_points", map[string]any{
+		"a": "Lookout FW 1",
+		"b": float64(5678),
+	})
+	args := s.fake.lastArguments(t)
+	mustHave(t, args, "a", "Lookout FW 1")
+	mustHave(t, args, "b", float64(5678))
+}
+
+func TestClosestPointsForwardsTolerance(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "closest_points", map[string]any{
+		"a":         "Drawer Side L",
+		"b":         "Cabinet Frame",
+		"tolerance": 0.125,
+	})
+	mustHave(t, s.fake.lastArguments(t), "tolerance", 0.125)
+}
+
+func TestClosestPointsRejectsMissingTarget(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "closest_points", map[string]any{
+		"b": "x",
+	}))
+	if env.Success {
+		t.Fatalf("want failure on missing 'a', got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatalf("ruby must not be called on validation failure, got %d", len(s.fake.Calls))
+	}
+}
+
+func TestClosestPointsRejectsEmptyStringTarget(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "closest_points", map[string]any{
+		"a": "",
+		"b": "Cabinet Frame",
+	}))
+	if env.Success {
+		t.Fatalf("want failure on empty 'a', got %v", env)
+	}
+}
+
+func TestClosestPointsRejectsNegativeTolerance(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "closest_points", map[string]any{
+		"a":         "x",
+		"b":         "y",
+		"tolerance": -0.01,
+	}))
+	if env.Success {
+		t.Fatalf("want failure on negative tolerance, got %v", env)
+	}
+}
+
+func TestClosestPointsSurfacesPayload(t *testing.T) {
+	s := newSession(t)
+	s.fake.NextResult = mcpFrame(map[string]any{
+		"distance":  0.0,
+		"point_a":   []any{8.0, -4.5, 114.0},
+		"point_b":   []any{8.0, -4.5, 114.0},
+		"status":    "contact",
+		"face_a_id": float64(1234),
+		"face_b_id": float64(5678),
+	}, nil)
+	env := envelopeOf(t, s.call(t, "closest_points", map[string]any{
+		"a": "Lookout FW 1",
+		"b": "Rafter W Fly F",
+	}))
+	if !env.Success {
+		t.Fatalf("envelope: %v", env)
+	}
+	result := env.Result.(map[string]any)
+	if result["status"] != "contact" {
+		t.Fatalf("status: %v", result["status"])
+	}
+	if !jsonEqual(result["point_a"], []any{8.0, -4.5, 114.0}) {
+		t.Fatalf("point_a: %v", result["point_a"])
+	}
+}
+
+func TestClosestPointsSurfacesOverlapNegativeDistance(t *testing.T) {
+	s := newSession(t)
+	s.fake.NextResult = mcpFrame(map[string]any{
+		"distance":  -0.5,
+		"point_a":   []any{0.0, 0.0, 0.0},
+		"point_b":   []any{0.0, 0.0, 0.0},
+		"status":    "overlap",
+		"face_a_id": float64(1),
+		"face_b_id": float64(2),
+	}, nil)
+	env := envelopeOf(t, s.call(t, "closest_points", map[string]any{
+		"a": "x", "b": "y",
+	}))
+	result := env.Result.(map[string]any)
+	if result["status"] != "overlap" {
+		t.Fatalf("status: %v", result["status"])
+	}
+	if result["distance"].(float64) >= 0 {
+		t.Fatalf("expected negative distance, got %v", result["distance"])
+	}
+}
+
 // --- argument-name parity for every tool ------------------------------------
 
 func TestToolForwardsExpectedArguments(t *testing.T) {
