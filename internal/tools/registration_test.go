@@ -111,6 +111,91 @@ func TestRegisterAll_ExposesExpectedToolNames(t *testing.T) {
 	}
 }
 
+// TestIntersectRaySchemaTargetIsTypedUnion guards the inputSchema for the
+// intersect_ray tool's `target` field against the regression where it
+// surfaces as the bare boolean schema `true`. JSON Schema 2020-12 permits
+// that — `true` matches anything — but Zod-based MCP clients (including
+// Claude Code) reject boolean property schemas, which then fails the whole
+// tools/list call. Target should advertise a typed string|integer(|null)
+// union instead.
+func TestIntersectRaySchemaTargetIsTypedUnion(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	RegisterAll(srv, stubSender{})
+
+	clientT, serverT := mcp.NewInMemoryTransports()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sess, err := srv.Connect(ctx, serverT, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	defer sess.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "tester", Version: "0"}, nil)
+	cs, err := client.Connect(ctx, clientT, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	defer cs.Close()
+
+	resp, err := cs.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+
+	var found bool
+	for _, tool := range resp.Tools {
+		if tool.Name != "intersect_ray" {
+			continue
+		}
+		found = true
+		// Marshal then re-parse so we see exactly what goes on the wire —
+		// `true` as a JSON value would land here as a bool, not a map.
+		b, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatalf("marshal schema: %v", err)
+		}
+		var s struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		}
+		if err := json.Unmarshal(b, &s); err != nil {
+			t.Fatalf("unmarshal schema: %v", err)
+		}
+		raw, ok := s.Properties["target"]
+		if !ok {
+			t.Fatalf("intersect_ray.properties.target missing; properties=%v", s.Properties)
+		}
+		// Reject the boolean-schema form, which is what jsonschema-go emits
+		// for an `any`-typed field and what Zod-based clients refuse.
+		if string(raw) == "true" || string(raw) == "false" {
+			t.Fatalf("intersect_ray.target: schema is bare bool %s; want object with type union", string(raw))
+		}
+		var prop map[string]any
+		if err := json.Unmarshal(raw, &prop); err != nil {
+			t.Fatalf("intersect_ray.target: schema not an object: %v (raw=%s)", err, string(raw))
+		}
+		types, _ := prop["type"].([]any)
+		if len(types) == 0 {
+			t.Fatalf("intersect_ray.target: schema has no type union; got %v", prop)
+		}
+		seen := map[string]bool{}
+		for _, x := range types {
+			if s, ok := x.(string); ok {
+				seen[s] = true
+			}
+		}
+		for _, want := range []string{"string", "integer"} {
+			if !seen[want] {
+				t.Errorf("intersect_ray.target.type: missing %q; got %v", want, types)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("intersect_ray tool not registered")
+	}
+}
+
 func toSchemaMap(t *testing.T, raw any) map[string]any {
 	t.Helper()
 	b, err := json.Marshal(raw)

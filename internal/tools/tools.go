@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"sync/atomic"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -710,7 +712,8 @@ func validateAssertions(assertions []map[string]any) error {
 
 func registerIntersectRay(srv *mcp.Server, s Sender) {
 	mcp.AddTool(srv, &mcp.Tool{
-		Name: "intersect_ray",
+		Name:        "intersect_ray",
+		InputSchema: intersectRayInputSchema(),
 		Description: `Cast a ray and return where it first hits model geometry — read-only.
 
 Use this instead of recomputing the answer from a surface equation kept in
@@ -755,6 +758,28 @@ Examples:
 		}
 		return callSketchup(s, "intersect_ray", in)
 	})
+}
+
+// intersectRayInputSchema builds the JSON schema advertised for intersect_ray.
+//
+// We can't lean on jsonschema-go's pure reflection here: IntersectRayInput.Target
+// is `any` (string OR int), and the reflection path emits the boolean schema
+// `true` for that — valid per JSON Schema 2020-12 but rejected by Zod-based
+// clients like Claude Code's MCP loader, which then refuse the whole tool. So
+// generate the schema from the struct, then replace the target sub-schema with
+// an explicit string|integer union.
+func intersectRayInputSchema() *jsonschema.Schema {
+	schema, err := jsonschema.ForType(reflect.TypeFor[IntersectRayInput](), &jsonschema.ForOptions{})
+	if err != nil {
+		panic(fmt.Errorf("intersect_ray: build input schema: %w", err))
+	}
+	if schema.Properties != nil {
+		schema.Properties["target"] = &jsonschema.Schema{
+			Types:       []string{"string", "integer", "null"},
+			Description: "Optional. Restrict the hit to geometry inside this group: a top-level group name (string) or an entity ID (integer).",
+		}
+	}
+	return schema
 }
 
 // validateIntersectRayInput enforces ray shape so the Ruby side never sees a
