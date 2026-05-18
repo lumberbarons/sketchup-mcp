@@ -821,11 +821,14 @@ tolerance: optional inches; a surface gap within tolerance is reported as
   - interiors penetrate                → "overlap" (distance returned negative)
 
 Returns {distance, point_a:[x,y,z], point_b:[x,y,z], status, face_a_id,
-face_b_id}. distance is signed: positive for a gap, negative for
-penetration depth (estimated via AABB axis-min penetration), 0 for a tight
-contact. point_a / point_b are world-space points on the respective
-surfaces; on a tight contact they coincide. face_a_id / face_b_id are the
-entity IDs of the faces holding the closest points.
+face_b_id}. distance is signed: positive for a gap, 0 for a tight
+contact, negative for penetration. On overlap the magnitude is the
+minimum AABB axis-penetration — an *estimate* of penetration depth, not
+the true minimum translation vector (out of scope for v1; usable as a
+"how much would I need to back this off?" approximation). point_a /
+point_b are world-space points on the respective surfaces; on a tight
+contact they coincide. face_a_id / face_b_id are the entity IDs of the
+faces holding the closest points.
 
 This is the domain-portable complement to intersect_ray: instead of
 "where does this ray hit?", it answers "are these two parts where I

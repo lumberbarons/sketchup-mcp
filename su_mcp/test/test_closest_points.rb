@@ -165,6 +165,108 @@ class TestAABBPenetrationDepth < Minitest::Test
   end
 end
 
+class TestFanTriangulate < Minitest::Test
+  def setup; @server = TestServer.new; end
+
+  def call(world_pts, face_id = 99)
+    out = []
+    @server.send(:fan_triangulate, world_pts, face_id, out)
+    out
+  end
+
+  def test_triangle_passes_through_as_one_triangle
+    pts = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+    tris = call(pts)
+    assert_equal 1, tris.length
+    assert_equal pts, tris[0][:points]
+    assert_equal 99, tris[0][:face_id]
+  end
+
+  def test_quad_splits_into_two_triangles_sharing_first_vertex
+    # Vertices in CCW order around a unit square in z=0.
+    q0 = [0.0, 0.0, 0.0]
+    q1 = [1.0, 0.0, 0.0]
+    q2 = [1.0, 1.0, 0.0]
+    q3 = [0.0, 1.0, 0.0]
+    tris = call([q0, q1, q2, q3])
+    assert_equal 2, tris.length
+    # Fan from q0: (q0,q1,q2) and (q0,q2,q3).
+    assert_equal [q0, q1, q2], tris[0][:points]
+    assert_equal [q0, q2, q3], tris[1][:points]
+  end
+
+  def test_pentagon_splits_into_three_triangles
+    # n-gon coverage: 5-vertex polygon → 3 triangles. Verifies no
+    # silent vertex drop on an arbitrary n.
+    pts = (0..4).map { |i| [i.to_f, (i * 2).to_f, 0.0] }
+    tris = call(pts)
+    assert_equal 3, tris.length
+    tris.each { |t| assert_equal pts[0], t[:points][0], "every fan triangle shares pts[0]" }
+    # Last triangle reaches the final vertex.
+    assert_equal pts[4], tris.last[:points][2]
+  end
+
+  def test_skips_degenerate_polygons_with_fewer_than_three_vertices
+    out = []
+    @server.send(:fan_triangulate, [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 1, out)
+    assert_empty out
+  end
+
+  def test_stamps_each_triangle_with_face_id
+    pts = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]]
+    tris = call(pts, 12345)
+    tris.each { |t| assert_equal 12345, t[:face_id] }
+  end
+end
+
+class TestClosestPointsClassify < Minitest::Test
+  def setup; @server = TestServer.new; end
+
+  def call(surface_distance, ox, oy, oz, tol)
+    @server.send(:closest_points_classify, surface_distance, ox, oy, oz, tol)
+  end
+
+  def test_clear_when_surface_distance_exceeds_tolerance
+    status, signed = call(5.0, -1.0, -1.0, -1.0, 0.0625)
+    assert_equal "clear", status
+    assert_in_delta 5.0, signed, 1e-12
+  end
+
+  def test_contact_when_within_tolerance_and_no_strict_aabb_overlap
+    # Surface gap is sub-tolerance and AABBs touch on every axis (gap 0) but
+    # don't strictly overlap by > tol on every axis. That's "contact", not
+    # "overlap".
+    status, signed = call(0.001, 0.0, 0.0, 0.0, 0.0625)
+    assert_equal "contact", status
+    assert_in_delta 0.001, signed, 1e-12
+  end
+
+  def test_overlap_when_aabbs_strictly_overlap_on_every_axis
+    # Surface distance is zero (interpenetration found by face-pair scan)
+    # AND AABBs overlap by more than tol on every axis. Magnitude is the
+    # smallest of the three positive penetration extents.
+    status, signed = call(0.0, 5.0, 1.0, 3.0, 0.0625)
+    assert_equal "overlap", status
+    assert_in_delta(-1.0, signed, 1e-12)
+  end
+
+  def test_contact_when_one_axis_clears_even_if_others_overlap
+    # AABBs overlap deeply on x and z, but are clear on y. That's a
+    # near-touch (e.g. surfaces grazing past each other), not overlap.
+    status, signed = call(0.01, 5.0, -2.0, 5.0, 0.0625)
+    assert_equal "contact", status
+    assert_in_delta 0.01, signed, 1e-12
+  end
+
+  def test_overlap_threshold_is_strict_greater_than_tolerance
+    # AABB overlap exactly at tolerance on the y axis does NOT count as
+    # strict overlap (the condition is `> tol`, not `>= tol`). Mirrors
+    # validate_geometry's no_overlap convention.
+    status, _signed = call(0.0, 1.0, 0.0625, 1.0, 0.0625)
+    assert_equal "contact", status
+  end
+end
+
 # Fakes for the closest_points_search loop — exercise the search itself
 # without needing actual triangle math fixtures.
 class TestClosestPointsSearch < Minitest::Test

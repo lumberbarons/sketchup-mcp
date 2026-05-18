@@ -1822,27 +1822,10 @@ module SU_MCP
       end
 
       best = closest_points_search(tris_a, tris_b)
-
-      # AABB axis-overlap classifies the "is this penetrating?" case. We
-      # treat genuine interior penetration as overlap with a negative
-      # signed distance whose magnitude is the minimum positive
-      # axis-penetration depth — a useful "by how much" estimate without
-      # the cost of a full minimum-translation-vector computation.
       a_bounds = ent_a.bounds
       b_bounds = ent_b.bounds
       ox, oy, oz = aabb_overlap_extents(a_bounds.min, a_bounds.max, b_bounds.min, b_bounds.max)
-      aabb_strict_overlap = ox > tol && oy > tol && oz > tol
-
-      surface_distance = best[:distance]
-      status, signed_distance =
-        if surface_distance > tol
-          ["clear", surface_distance]
-        elsif aabb_strict_overlap
-          depth = aabb_penetration_depth(ox, oy, oz)
-          ["overlap", -depth]
-        else
-          ["contact", surface_distance]
-        end
+      status, signed_distance = closest_points_classify(best[:distance], ox, oy, oz, tol)
 
       {
         success: true,
@@ -1853,6 +1836,29 @@ module SU_MCP
         face_a_id: best[:face_a_id],
         face_b_id: best[:face_b_id]
       }
+    end
+
+    # Pure: turn the raw closest-surface distance + AABB axis-extents into
+    # the final [status, signed_distance] pair. Pulled out of
+    # closest_points so the three classification branches can be
+    # exercised without SketchUp:
+    #
+    # - distance > tol                          → "clear",   +distance
+    # - AABB overlaps on every axis by > tol    → "overlap", -aabb_penetration_depth
+    # - else (touch / sub-tolerance brush)      → "contact", +distance
+    #
+    # The overlap branch's magnitude is the min positive AABB axis-overlap,
+    # an estimate rather than the true minimum translation vector — full
+    # MTV is out of scope for v1 per the bead.
+    def closest_points_classify(surface_distance, ox, oy, oz, tol)
+      aabb_strict_overlap = ox > tol && oy > tol && oz > tol
+      if surface_distance > tol
+        ["clear", surface_distance]
+      elsif aabb_strict_overlap
+        ["overlap", -aabb_penetration_depth(ox, oy, oz)]
+      else
+        ["contact", surface_distance]
+      end
     end
 
     # Pure: positive minimum AABB axis-penetration depth. Used to give the
@@ -1877,6 +1883,13 @@ module SU_MCP
     end
 
     def collect_world_triangles(entity, accum_transform, out)
+      # ComponentInstance exposes child entities only through `.definition.entities`.
+      # Modern Sketchup::Group also responds to `.definition` (it's a thin
+      # ComponentInstance under the hood) and both `.entities` and
+      # `.definition.entities` return the same collection — preferring
+      # `.definition.entities` covers both shapes with one branch. Older
+      # Group implementations that only respond to `.entities` fall through
+      # to the second branch.
       ents =
         if entity.respond_to?(:definition) && entity.definition.respond_to?(:entities)
           entity.definition.entities
@@ -1890,19 +1903,42 @@ module SU_MCP
       ents.each do |child|
         case child
         when Sketchup::Face
-          mesh = child.mesh
-          mesh.polygons.each do |poly|
-            next unless poly.length >= 3
-            idxs = poly.first(3).map(&:abs)
-            pts = idxs.map do |i|
-              p = mesh.point_at(i).transform(composed)
-              [p.x.to_f, p.y.to_f, p.z.to_f]
-            end
-            out << { points: pts, face_id: child.entityID }
-          end
+          collect_face_triangles(child, composed, out)
         when Sketchup::Group, Sketchup::ComponentInstance
           collect_world_triangles(child, composed, out)
         end
+      end
+    end
+
+    # Pull every triangle from a single face into `out` (an accumulator of
+    # {points, face_id} hashes). Sketchup::Face#mesh normally returns a
+    # pre-triangulated PolygonMesh, but Geom::PolygonMesh#polygons can
+    # carry n-gons — naively keeping the first three vertices would
+    # silently drop material from a quad. Fan-triangulate to be safe.
+    def collect_face_triangles(face, composed, out)
+      mesh = face.mesh
+      mesh.polygons.each do |poly|
+        next unless poly.length >= 3
+        world_pts = poly.map do |idx|
+          p = mesh.point_at(idx.abs).transform(composed)
+          [p.x.to_f, p.y.to_f, p.z.to_f]
+        end
+        fan_triangulate(world_pts, face.entityID, out)
+      end
+    end
+
+    # Pure: fan-triangulate an n-vertex polygon given as ordered world-
+    # space [x,y,z] points. Emits n-2 triangles into `out`, all sharing
+    # the first vertex (the textbook convex-polygon fan). For n < 3 emits
+    # nothing. The polygon is assumed convex; n-gons from
+    # Sketchup::Face#mesh are convex by construction.
+    def fan_triangulate(world_pts, face_id, out)
+      return if world_pts.length < 3
+      (1...world_pts.length - 1).each do |k|
+        out << {
+          points: [world_pts[0], world_pts[k], world_pts[k + 1]],
+          face_id: face_id
+        }
       end
     end
 
