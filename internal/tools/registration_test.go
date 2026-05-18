@@ -197,6 +197,86 @@ func TestIntersectRaySchemaTargetIsTypedUnion(t *testing.T) {
 	}
 }
 
+// TestClosestPointsSchemaTargetsAreTypedUnion mirrors the intersect_ray
+// regression guard for closest_points: the a / b target fields are `any`
+// (string OR int) and would otherwise surface as bare boolean schemas that
+// Zod-based MCP clients reject.
+func TestClosestPointsSchemaTargetsAreTypedUnion(t *testing.T) {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	RegisterAll(srv, stubSender{})
+
+	clientT, serverT := mcp.NewInMemoryTransports()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sess, err := srv.Connect(ctx, serverT, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	defer sess.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "tester", Version: "0"}, nil)
+	cs, err := client.Connect(ctx, clientT, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	defer cs.Close()
+
+	resp, err := cs.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+
+	var found bool
+	for _, tool := range resp.Tools {
+		if tool.Name != "closest_points" {
+			continue
+		}
+		found = true
+		b, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatalf("marshal schema: %v", err)
+		}
+		var s struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		}
+		if err := json.Unmarshal(b, &s); err != nil {
+			t.Fatalf("unmarshal schema: %v", err)
+		}
+		for _, key := range []string{"a", "b"} {
+			raw, ok := s.Properties[key]
+			if !ok {
+				t.Fatalf("closest_points.properties.%s missing; properties=%v", key, s.Properties)
+			}
+			if string(raw) == "true" || string(raw) == "false" {
+				t.Fatalf("closest_points.%s: schema is bare bool %s; want object with type union", key, string(raw))
+			}
+			var prop map[string]any
+			if err := json.Unmarshal(raw, &prop); err != nil {
+				t.Fatalf("closest_points.%s: schema not an object: %v (raw=%s)", key, err, string(raw))
+			}
+			types, _ := prop["type"].([]any)
+			if len(types) == 0 {
+				t.Fatalf("closest_points.%s: schema has no type union; got %v", key, prop)
+			}
+			seen := map[string]bool{}
+			for _, x := range types {
+				if s, ok := x.(string); ok {
+					seen[s] = true
+				}
+			}
+			for _, want := range []string{"string", "integer"} {
+				if !seen[want] {
+					t.Errorf("closest_points.%s.type: missing %q; got %v", key, want, types)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("closest_points tool not registered")
+	}
+}
+
 func toSchemaMap(t *testing.T, raw any) map[string]any {
 	t.Helper()
 	b, err := json.Marshal(raw)

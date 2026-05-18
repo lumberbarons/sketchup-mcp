@@ -805,7 +805,8 @@ func validateIntersectRayInput(in IntersectRayInput) error {
 
 func registerClosestPoints(srv *mcp.Server, s Sender) {
 	mcp.AddTool(srv, &mcp.Tool{
-		Name: "closest_points",
+		Name:        "closest_points",
+		InputSchema: closestPointsInputSchema(),
 		Description: `Return the pair of points on two groups' surfaces with the
 minimum separation — the read-only "are these touching / how close" query.
 
@@ -841,6 +842,30 @@ BVH-accelerated path may be needed.`,
 		}
 		return callSketchup(s, "closest_points", in)
 	})
+}
+
+// closestPointsInputSchema builds the JSON schema advertised for
+// closest_points. Same workaround as intersectRayInputSchema: the A and B
+// targets are `any` (string OR int) so the reflection path would emit a
+// boolean `true` schema for each, which Zod-based MCP clients reject.
+// Generate via reflection, then replace those two property schemas with an
+// explicit string|integer union.
+func closestPointsInputSchema() *jsonschema.Schema {
+	schema, err := jsonschema.ForType(reflect.TypeFor[ClosestPointsInput](), &jsonschema.ForOptions{})
+	if err != nil {
+		panic(fmt.Errorf("closest_points: build input schema: %w", err))
+	}
+	if schema.Properties != nil {
+		schema.Properties["a"] = &jsonschema.Schema{
+			Types:       []string{"string", "integer"},
+			Description: "First group: top-level name (string) or entity ID (integer).",
+		}
+		schema.Properties["b"] = &jsonschema.Schema{
+			Types:       []string{"string", "integer"},
+			Description: "Second group: top-level name (string) or entity ID (integer).",
+		}
+	}
+	return schema
 }
 
 // validateClosestPointsInput rejects the obviously-broken shapes before the
