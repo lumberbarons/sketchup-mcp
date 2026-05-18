@@ -1645,29 +1645,32 @@ module SU_MCP
         next nil if result.nil?
         hit_pt, path = result
         face = path.reverse.find { |e| e.is_a?(Sketchup::Face) }
-        face_normal = nil
-        if face
-          n = world_normal_for_face(face, path)
-          face_normal = [n.x.to_f, n.y.to_f, n.z.to_f]
-        end
-        [[hit_pt.x.to_f, hit_pt.y.to_f, hit_pt.z.to_f], path, face, face_normal]
+        # Normal computation is lazy: when the loop discards a hit (wrong
+        # target, back face, distance over cap), the cumulative-transform
+        # math never runs. A step-cap-exhaustion path now does 0 normal
+        # computations instead of 256.
+        normal_fn = face ? lambda { n = world_normal_for_face(face, path); [n.x.to_f, n.y.to_f, n.z.to_f] } : nil
+        [[hit_pt.x.to_f, hit_pt.y.to_f, hit_pt.z.to_f], path, face, normal_fn]
       end
 
       intersect_ray_loop(origin_xyz, unit_dir, target, max_distance, include_back, raycaster)
     end
 
     # Pure-but-for-raycaster: drive the skip-and-retry loop with a callable
-    # that returns synthetic hits as [hit_point_xyz, path, face, world_normal_xyz]
-    # tuples (or nil for a miss). Extracted from intersect_ray so tests can
-    # exercise target filtering, back-face culling, max_distance cutoff, and
-    # step-cap exhaustion without a live SketchUp.
+    # that returns synthetic hits as [hit_point_xyz, path, face, normal_fn]
+    # tuples (or nil for a miss). `normal_fn` is a no-arg callable returning
+    # the face's world-space normal as [x,y,z]; it's only invoked when the
+    # loop reaches a back-face check or accepts the hit. Extracted from
+    # intersect_ray so tests can exercise target filtering, back-face
+    # culling, max_distance cutoff, and step-cap exhaustion without
+    # SketchUp.
     def intersect_ray_loop(origin_xyz, unit_dir, target, max_distance, include_back, raycaster)
       current = origin_xyz
       INTERSECT_RAY_MAX_STEPS.times do
         hit = raycaster.call(current)
         return intersect_ray_miss(:miss) if hit.nil?
 
-        hit_pt, path, face, normal_world = hit
+        hit_pt, path, face, normal_fn = hit
         distance = euclid_distance(origin_xyz, hit_pt)
         return intersect_ray_miss(:max_distance_exceeded) if max_distance && distance > max_distance
 
@@ -1682,10 +1685,18 @@ module SU_MCP
           next
         end
 
-        if face && !include_back && normal_world && vec3_dot(unit_dir, normal_world) > 0
-          current = advance_xyz_along(hit_pt, unit_dir)
-          next
+        # Lazy normal: compute at most once per accepted hit, never for
+        # target-skipped ones. Reused for the back-face check and the
+        # face_normal field on the response.
+        normal_world = nil
+        if face && normal_fn && !include_back
+          normal_world = normal_fn.call
+          if normal_world && vec3_dot(unit_dir, normal_world) > 0
+            current = advance_xyz_along(hit_pt, unit_dir)
+            next
+          end
         end
+        normal_world = normal_fn.call if face && normal_fn && normal_world.nil?
 
         return {
           success: true,
