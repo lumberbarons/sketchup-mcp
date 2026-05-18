@@ -791,6 +791,34 @@ func TestToolForwardsExpectedArguments(t *testing.T) {
 			expectedRubyArgs:   map[string]any{},
 		},
 		{
+			toolName: "export_scene",
+			mcpArgs: map[string]any{
+				"format": "png",
+				"width":  800,
+				"height": 600,
+				"camera": map[string]any{
+					"eye":         []any{-30.0, -30.0, 160.0},
+					"target":      []any{0.0, 0.0, 100.0},
+					"up":          []any{0.0, 0.0, 1.0},
+					"perspective": true,
+					"fov":         35.0,
+				},
+			},
+			expectedRubyMethod: "export",
+			expectedRubyArgs: map[string]any{
+				"format": "png",
+				"width":  float64(800),
+				"height": float64(600),
+				"camera": map[string]any{
+					"eye":         []any{-30.0, -30.0, 160.0},
+					"target":      []any{0.0, 0.0, 100.0},
+					"up":          []any{0.0, 0.0, 1.0},
+					"perspective": true,
+					"fov":         35.0,
+				},
+			},
+		},
+		{
 			toolName:           "eval_ruby",
 			mcpArgs:            map[string]any{"code": "1+1"},
 			expectedRubyMethod: "eval_ruby",

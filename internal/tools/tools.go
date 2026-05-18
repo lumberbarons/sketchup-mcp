@@ -462,8 +462,44 @@ func registerSetMaterial(srv *mcp.Server, s Sender) {
 
 func registerExportScene(srv *mcp.Server, s Sender) {
 	mcp.AddTool(srv, &mcp.Tool{
-		Name:        "export_scene",
-		Description: "Export the current scene",
+		Name: "export_scene",
+		Description: `Export the current scene to a file. With format="png"
+or "jpg" this is also the *visual snapshot* tool — use it to see the
+model between edits instead of working blind. inspect_geometry +
+validate_geometry give numeric truth, but a PNG closes the loop when
+"does it look right?" matters (e.g. checking that rake lookouts land
+at the gable peaks, that a roof slope reads correctly, that pieces
+aren't visually interpenetrating). Writes under the system temp dir
+and returns the path; cheap enough to call after each change.
+
+format: skp (default) | obj | dae | stl | png | jpg.
+
+width / height: pixel dimensions, image formats only. Default 1920×1080.
+When the PNG is being read back into an agent context, prefer something
+smaller (800×600 is usually plenty for a "did it land where I expected"
+check); reserve the 1920×1080 default for renders the user will look at.
+
+camera: optional, image formats only. {eye:[x,y,z], target:[x,y,z],
+up?:[x,y,z] (default z-up), perspective?:bool, fov?:deg}. Without
+camera you get whatever view the user has in SketchUp; with camera
+you compose a specific shot. The Ruby handler snapshots the active
+view's camera, applies the supplied one, writes the image, then
+restores the previous camera — the user's view is not mutated.
+Supplying camera with a non-image format is rejected.
+
+Examples:
+
+  # Quick lightweight snapshot of the user's current view
+  {"format": "png", "width": 800, "height": 600}
+
+  # Iso from upper-front-left, framing the front gable
+  {"format": "png", "width": 1024, "height": 768,
+   "camera": {"eye": [-30, -30, 160], "target": [0, 0, 100]}}
+
+  # Plan-view (top-down) snapshot, parallel projection
+  {"format": "png", "width": 800, "height": 800,
+   "camera": {"eye": [0, 0, 500], "target": [0, 0, 0],
+              "up": [0, 1, 0], "perspective": false}}`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in ExportSceneInput) (*mcp.CallToolResult, any, error) {
 		return callSketchup(s, "export", in)
 	})

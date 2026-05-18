@@ -126,7 +126,7 @@ binary lives on your `PATH`).
 * `mirror_component` — Reflect a Group across a plane (bilateral symmetry counterpart to `pattern_linear`)
 * `get_selection` — Get information about currently selected components
 * `set_material` — Apply a material or color to a component
-* `export_scene` — Export the current scene (default format: `skp`)
+* `export_scene` — Export the current scene to skp/obj/dae/stl/png/jpg. With `format=png` it doubles as a visual snapshot tool; optional `width`/`height` and `camera={eye, target, up?, perspective?, fov?}` let an agent compose a specific framed shot at a context-friendly size, and the user's SketchUp camera is restored after the render
 * `eval_ruby` — Execute arbitrary Ruby code in SketchUp for advanced operations
 
 ### Batching many operations

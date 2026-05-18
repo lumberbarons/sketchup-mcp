@@ -93,9 +93,33 @@ type SetMaterialInput struct {
 	Material string `json:"material"`
 }
 
+// CameraInput composes a SketchUp camera for export_scene image renders.
+// Eye and Target are world-space [x,y,z] positions. Up is an optional
+// [x,y,z] vector that defaults to z-up [0,0,1] on the Ruby side. Perspective
+// and FOV (degrees) are optional camera-mode overrides.
+type CameraInput struct {
+	Eye         []float64 `json:"eye"`
+	Target      []float64 `json:"target"`
+	Up          []float64 `json:"up,omitempty"`
+	Perspective *bool     `json:"perspective,omitempty"`
+	FOV         *float64  `json:"fov,omitempty"`
+}
+
 // ExportSceneInput backs the export_scene tool.
+//
+// Width and Height are pixel dimensions, image formats only. The Ruby side
+// defaults to 1920×1080 when omitted; callers feeding the PNG back into an
+// LLM context window will usually want something smaller (e.g. 800×600).
+//
+// Camera is only honored for image formats (png/jpg/jpeg); supplying it with
+// a non-image format is an error. When set, the Ruby handler snapshots the
+// current view camera, applies the requested one, writes the image, then
+// restores the previous camera so the user's view is unaffected.
 type ExportSceneInput struct {
-	Format string `json:"format,omitempty"`
+	Format string       `json:"format,omitempty"`
+	Width  *int         `json:"width,omitempty"`
+	Height *int         `json:"height,omitempty"`
+	Camera *CameraInput `json:"camera,omitempty"`
 }
 
 // BooleanOpInput backs the boolean_op tool.

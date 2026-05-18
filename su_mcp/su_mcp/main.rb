@@ -1805,12 +1805,75 @@ module SU_MCP
       { success: true, entities: selected_entities }
     end
     
+    # Parse and validate the optional `camera` block from export_scene
+    # params. Returns nil when no camera is supplied, or a normalized hash
+    # {eye:, target:, up:, perspective:, fov:} otherwise. Pure — no
+    # SketchUp API calls — so it can be unit-tested without SketchUp.
+    # Image formats only; caller is responsible for rejecting camera on
+    # non-image formats.
+    def self.parse_camera_params(camera)
+      return nil if camera.nil?
+      raise "camera must be a hash" unless camera.is_a?(Hash)
+
+      eye    = parse_xyz_triple(camera["eye"], "eye")
+      target = parse_xyz_triple(camera["target"], "target")
+      up     = camera.key?("up") ? parse_xyz_triple(camera["up"], "up") : [0.0, 0.0, 1.0]
+
+      raise "camera.eye and camera.target must differ" if eye == target
+      raise "camera.up must be a non-zero vector" if up == [0.0, 0.0, 0.0]
+
+      perspective = camera["perspective"]
+      unless perspective.nil? || perspective == true || perspective == false
+        raise "camera.perspective must be a boolean"
+      end
+
+      fov = camera["fov"]
+      unless fov.nil?
+        fov = Float(fov)
+        raise "camera.fov must be > 0 and < 180" unless fov > 0 && fov < 180
+      end
+
+      { eye: eye, target: target, up: up, perspective: perspective, fov: fov }
+    end
+
+    def self.parse_xyz_triple(value, name)
+      unless value.is_a?(Array) && value.length == 3
+        raise "camera.#{name} must be an [x, y, z] array"
+      end
+      value.map { |v| Float(v) }
+    end
+
+    IMAGE_EXPORT_FORMATS = %w[png jpg jpeg].freeze
+    IMAGE_MAX_DIMENSION = 8192
+
+    # Validate and coerce optional pixel dimensions for image exports.
+    # Returns nil when absent. Pure for unit testing.
+    def self.parse_image_dimension(value, name)
+      return nil if value.nil?
+      coerced = Integer(value)
+      unless coerced > 0 && coerced <= IMAGE_MAX_DIMENSION
+        raise "#{name} must be between 1 and #{IMAGE_MAX_DIMENSION}"
+      end
+      coerced
+    end
+
     def export_scene(params)
       log "Exporting scene with params: #{params.inspect}"
       model = Sketchup.active_model
-      
+
       format = params["format"] || "skp"
-      
+
+      camera_spec = self.class.parse_camera_params(params["camera"])
+      if camera_spec && !IMAGE_EXPORT_FORMATS.include?(format.downcase)
+        raise "camera is only supported for image formats (png/jpg/jpeg); got #{format}"
+      end
+
+      width  = self.class.parse_image_dimension(params["width"], "width")
+      height = self.class.parse_image_dimension(params["height"], "height")
+      if (width || height) && !IMAGE_EXPORT_FORMATS.include?(format.downcase)
+        raise "width/height are only supported for image formats (png/jpg/jpeg); got #{format}"
+      end
+
       begin
         # Create a temporary directory for exports
         temp_dir = File.join(ENV['TEMP'] || ENV['TMP'] || Dir.tmpdir, "sketchup_exports")
@@ -1876,21 +1939,35 @@ module SU_MCP
           ext = format.downcase == "jpg" ? "jpeg" : format.downcase
           export_path = File.join(temp_dir, "#{filename}.#{ext}")
           log "Exporting to image file: #{export_path}"
-          
-          # Get the current view
+
           view = model.active_view
-          
-          # Set up options for the export
+
           options = {
             :filename => export_path,
-            :width => params["width"] || 1920,
-            :height => params["height"] || 1080,
+            :width => width || 1920,
+            :height => height || 1080,
             :antialias => true,
             :transparent => (ext == "png")
           }
-          
-          # Export the image
-          view.write_image(options)
+
+          # Snapshot+restore the user's camera so a composed export does
+          # not leave their SketchUp view at a different angle.
+          previous_camera = camera_spec ? view.camera : nil
+          begin
+            if camera_spec
+              new_camera = Sketchup::Camera.new(
+                Geom::Point3d.new(*camera_spec[:eye]),
+                Geom::Point3d.new(*camera_spec[:target]),
+                Geom::Vector3d.new(*camera_spec[:up])
+              )
+              new_camera.perspective = camera_spec[:perspective] unless camera_spec[:perspective].nil?
+              new_camera.fov = camera_spec[:fov] if camera_spec[:fov]
+              view.camera = new_camera
+            end
+            view.write_image(options)
+          ensure
+            view.camera = previous_camera if previous_camera
+          end
           
         else
           raise "Unsupported export format: #{format}"
