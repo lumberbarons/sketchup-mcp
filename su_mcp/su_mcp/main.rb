@@ -250,6 +250,8 @@ module SU_MCP
           mirror_component(args)
         when "validate_geometry"
           validate_geometry(args)
+        when "intersect_ray"
+          intersect_ray(args)
         when "chamfer_edges"
           chamfer_edges(args)
         when "fillet_edges"
@@ -1603,6 +1605,128 @@ module SU_MCP
 
     def format_tol(t)
       "#{format_num(t)}\""
+    end
+
+    # Tiny step past a previous hit so the next raytest doesn't re-hit the
+    # same face. 1e-4" is ~2.5 microns — far below any modeling tolerance.
+    INTERSECT_RAY_EPS = 1.0e-4
+
+    # Soft cap on hit-skipping iterations when a target is supplied. The loop
+    # advances past each face it doesn't want; this bounds runaway in case a
+    # caller targets something the ray will never reach.
+    INTERSECT_RAY_MAX_STEPS = 256
+
+    def intersect_ray(params)
+      log "intersect_ray params: #{params.inspect}"
+      origin = params["origin"]
+      direction = params["direction"]
+      raise "'origin' must be [x,y,z]" unless origin.is_a?(Array) && origin.length == 3
+      raise "'direction' must be [x,y,z]" unless direction.is_a?(Array) && direction.length == 3
+
+      dvec = Geom::Vector3d.new(direction[0].to_f, direction[1].to_f, direction[2].to_f)
+      raise "'direction' must be non-zero" if dvec.length == 0
+      dvec.normalize!
+
+      target = params["target"]
+      max_distance = params["max_distance"]
+      max_distance = max_distance.to_f if max_distance
+      include_back = params.key?("include_back_faces") ? !!params["include_back_faces"] : false
+
+      model = Sketchup.active_model
+      raise "no active model" unless model
+
+      origin_pt = Geom::Point3d.new(origin[0].to_f, origin[1].to_f, origin[2].to_f)
+      current = origin_pt
+      miss = { success: true, result: "miss", hit: false }
+
+      INTERSECT_RAY_MAX_STEPS.times do
+        hit = model.raytest([current, dvec], true)
+        return miss if hit.nil?
+
+        hit_pt, path = hit
+        distance = origin_pt.distance(hit_pt).to_f
+        return miss if max_distance && distance > max_distance
+
+        face = path.reverse.find { |e| e.is_a?(Sketchup::Face) }
+        group_match = target ? find_target_group_in_path(path, target) : path.reverse.find { |e| e.is_a?(Sketchup::Group) }
+
+        if target && group_match.nil?
+          # Wrong group — step past this hit and keep going.
+          current = advance_past(hit_pt, dvec)
+          next
+        end
+
+        if face
+          normal_world = world_normal_for_face(face, path)
+          if !include_back && dvec.dot(normal_world) > 0
+            current = advance_past(hit_pt, dvec)
+            next
+          end
+        end
+
+        return {
+          success: true,
+          result: "hit",
+          hit: true,
+          point: [hit_pt.x.to_f, hit_pt.y.to_f, hit_pt.z.to_f],
+          distance: distance,
+          face_id: face ? face.entityID : nil,
+          group_name: group_match.respond_to?(:name) ? group_match.name : nil,
+          group_id: group_match ? group_match.entityID : nil,
+          face_normal: face ? [normal_world.x.to_f, normal_world.y.to_f, normal_world.z.to_f] : nil
+        }
+      end
+
+      miss
+    end
+
+    # Pure-ish: walk a raytest path looking for a Group / ComponentInstance
+    # whose name (string target) or entityID (integer target) matches. Returns
+    # the matching node, or nil. Targets nest, so the *innermost* match wins —
+    # if the caller asked for "Wall A" and the ray hits a face inside a
+    # nested group inside Wall A, that's still a Wall A hit.
+    def find_target_group_in_path(path, target)
+      path.reverse.find do |e|
+        next false unless e.is_a?(Sketchup::Group) || e.is_a?(Sketchup::ComponentInstance)
+        if target.is_a?(Integer) || (target.is_a?(String) && target =~ /\A-?\d+\z/)
+          e.entityID == target.to_i
+        else
+          e.respond_to?(:name) && e.name == target.to_s
+        end
+      end
+    end
+
+    # Compose the world transform for a face by accumulating every
+    # Group / ComponentInstance transform above it in the raytest path.
+    # The face itself doesn't carry a transform — its normal is in its
+    # parent's local space, so we transform by the cumulative parent.
+    def cumulative_path_transform(path)
+      t = Geom::Transformation.new
+      path.each do |node|
+        break if node.is_a?(Sketchup::Face)
+        t = t * node.transformation if node.respond_to?(:transformation)
+      end
+      t
+    end
+
+    # Face normal in world coordinates. Pulled out so the raytest loop reads
+    # clearly and a future test can exercise the per-axis math.
+    def world_normal_for_face(face, path)
+      t = cumulative_path_transform(path)
+      n = face.normal.transform(t)
+      n.normalize!
+      n
+    end
+
+    # Advance the ray origin by a tiny step past the hit point so the next
+    # raytest doesn't re-hit the same face. Direction must already be
+    # normalized.
+    def advance_past(point, unit_direction)
+      Geom::Point3d.new(
+        point.x + unit_direction.x * INTERSECT_RAY_EPS,
+        point.y + unit_direction.y * INTERSECT_RAY_EPS,
+        point.z + unit_direction.z * INTERSECT_RAY_EPS
+      )
     end
 
     def inspect_geometry(params)

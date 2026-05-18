@@ -169,6 +169,23 @@ type ValidateGeometryInput struct {
 	Assertions []map[string]any `json:"assertions"`
 }
 
+// IntersectRayInput backs the intersect_ray tool.
+//
+// Origin and Direction are world-space [x,y,z]. Direction need not be unit
+// length but must be non-zero. Target optionally restricts the hit to
+// geometry inside a named group (string) or a specific group entity ID
+// (numeric); when omitted, any visible geometry can match. MaxDistance caps
+// the search distance in inches. IncludeBackFaces controls whether a hit
+// where the ray strikes a face from behind (ray · face_normal_world > 0)
+// counts; default false so callers get the usual "first front face" answer.
+type IntersectRayInput struct {
+	Origin           []float64 `json:"origin"`
+	Direction        []float64 `json:"direction"`
+	Target           any       `json:"target,omitempty"`
+	MaxDistance      *float64  `json:"max_distance,omitempty"`
+	IncludeBackFaces *bool     `json:"include_back_faces,omitempty"`
+}
+
 // MirrorComponentInput backs the mirror_component tool.
 //
 // Address the source by exactly one of ID or Name. The mirror plane is given

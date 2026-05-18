@@ -165,6 +165,7 @@ func RegisterAll(server *mcp.Server, s Sender) {
 	registerPatternLinear(server, s)
 	registerMirrorComponent(server, s)
 	registerValidateGeometry(server, s)
+	registerIntersectRay(server, s)
 	registerEvalRuby(server, s)
 }
 
@@ -703,6 +704,71 @@ func validateAssertions(assertions []map[string]any) error {
 		default:
 			return fmt.Errorf("assertion #%d: unknown kind %q (expected bounds, contact, aligned, or no_overlap)", i, kind)
 		}
+	}
+	return nil
+}
+
+func registerIntersectRay(srv *mcp.Server, s Sender) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "intersect_ray",
+		Description: `Cast a ray and return where it first hits model geometry — read-only.
+
+Use this instead of recomputing the answer from a surface equation kept in
+the agent's head (rafter-top Z at a given X, ridge centerline height at a
+given Y, etc.). The model already knows; this tool asks it.
+
+origin: [x,y,z] world-space ray start (inches).
+direction: [x,y,z] world-space direction. Need not be unit length; must be
+    non-zero.
+target: optional. Restrict the hit to geometry inside this group: pass an
+    exact top-level group name (string) or an entity ID (integer). When
+    omitted, any visible geometry can match. The hit search advances past
+    intermediate faces until one inside the target is found (or the ray
+    exits all geometry / hits the max_distance cap).
+max_distance: optional cap on hit distance (inches). Default unbounded.
+include_back_faces: optional, default false. When false, hits where the ray
+    strikes a face from behind (ray · face_normal_world > 0) are skipped —
+    the usual "first front face" semantic. Pass true to accept any face.
+
+Returns {hit:true, point:[x,y,z], distance, face_id, group_name,
+face_normal:[x,y,z]} on a hit, or {hit:false} when the ray misses.
+
+Examples:
+
+  # Find the rafter-top Z at X=8 (drop a plumb line onto the named rafter)
+  {"origin": [8, 0.75, 200], "direction": [0, 0, -1],
+   "target": "Rafter W Gable F"}
+
+  # Confirm ridge centerline height
+  {"origin": [60.5, 0.75, 200], "direction": [0, 0, -1],
+   "target": "Ridge Board"}
+
+  # Where does a plumb line from the eave hit the deck?
+  {"origin": [12, 24, 200], "direction": [0, 0, -1], "target": "Deck"}`,
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in IntersectRayInput) (*mcp.CallToolResult, any, error) {
+		if err := validateIntersectRayInput(in); err != nil {
+			return textResult(failureEnvelope(err.Error())), nil, nil
+		}
+		return callSketchup(s, "intersect_ray", in)
+	})
+}
+
+// validateIntersectRayInput enforces ray shape so the Ruby side never sees a
+// malformed origin/direction. Numeric content (non-zero direction) is also
+// checked here so the user gets a clear error pre-flight rather than a
+// SketchUp API failure.
+func validateIntersectRayInput(in IntersectRayInput) error {
+	if len(in.Origin) != 3 {
+		return fmt.Errorf("origin must have 3 elements [x,y,z], got %d", len(in.Origin))
+	}
+	if len(in.Direction) != 3 {
+		return fmt.Errorf("direction must have 3 elements [x,y,z], got %d", len(in.Direction))
+	}
+	if in.Direction[0] == 0 && in.Direction[1] == 0 && in.Direction[2] == 0 {
+		return fmt.Errorf("direction must be non-zero; got [0,0,0]")
+	}
+	if in.MaxDistance != nil && *in.MaxDistance <= 0 {
+		return fmt.Errorf("max_distance must be > 0 when supplied; got %v", *in.MaxDistance)
 	}
 	return nil
 }

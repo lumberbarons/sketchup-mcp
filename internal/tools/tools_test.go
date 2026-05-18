@@ -751,6 +751,163 @@ func TestValidateGeometrySurfacesResultsPayload(t *testing.T) {
 	}
 }
 
+// --- intersect_ray ----------------------------------------------------------
+
+func TestIntersectRayForwardsMinimumArgs(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "intersect_ray", map[string]any{
+		"origin":    []float64{0, 0, 100},
+		"direction": []float64{0, 0, -1},
+	})
+	if s.fake.lastToolName(t) != "intersect_ray" {
+		t.Fatalf("tool name: %q", s.fake.lastToolName(t))
+	}
+	args := s.fake.lastArguments(t)
+	mustHave(t, args, "origin", []float64{0, 0, 100})
+	mustHave(t, args, "direction", []float64{0, 0, -1})
+	for _, k := range []string{"target", "max_distance", "include_back_faces"} {
+		mustNotHave(t, args, k)
+	}
+}
+
+func TestIntersectRayForwardsStringTarget(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "intersect_ray", map[string]any{
+		"origin":    []float64{8, 0.75, 200},
+		"direction": []float64{0, 0, -1},
+		"target":    "Rafter W Gable F",
+	})
+	mustHave(t, s.fake.lastArguments(t), "target", "Rafter W Gable F")
+}
+
+func TestIntersectRayForwardsNumericTarget(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "intersect_ray", map[string]any{
+		"origin":    []float64{0, 0, 100},
+		"direction": []float64{0, 0, -1},
+		"target":    float64(12345),
+	})
+	mustHave(t, s.fake.lastArguments(t), "target", float64(12345))
+}
+
+func TestIntersectRayForwardsAllOptionals(t *testing.T) {
+	s := newSession(t)
+	t_ := true
+	maxd := 500.0
+	_ = s.call(t, "intersect_ray", map[string]any{
+		"origin":             []float64{0, 0, 100},
+		"direction":          []float64{0, 0, -1},
+		"target":             "Deck",
+		"max_distance":       maxd,
+		"include_back_faces": t_,
+	})
+	args := s.fake.lastArguments(t)
+	mustHave(t, args, "max_distance", 500.0)
+	mustHave(t, args, "include_back_faces", true)
+	mustHave(t, args, "target", "Deck")
+}
+
+func TestIntersectRayRejectsWrongOriginLength(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "intersect_ray", map[string]any{
+		"origin":    []float64{0, 0},
+		"direction": []float64{0, 0, -1},
+	}))
+	if env.Success {
+		t.Fatalf("want failure on bad origin, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatalf("ruby must not be called on validation failure, got %d", len(s.fake.Calls))
+	}
+}
+
+func TestIntersectRayRejectsWrongDirectionLength(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "intersect_ray", map[string]any{
+		"origin":    []float64{0, 0, 0},
+		"direction": []float64{0, 0},
+	}))
+	if env.Success {
+		t.Fatalf("want failure on bad direction, got %v", env)
+	}
+}
+
+func TestIntersectRayRejectsZeroDirection(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "intersect_ray", map[string]any{
+		"origin":    []float64{0, 0, 0},
+		"direction": []float64{0, 0, 0},
+	}))
+	if env.Success {
+		t.Fatalf("want failure on zero direction, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatalf("ruby must not be called on validation failure")
+	}
+	errStr, _ := env.Error.(string)
+	if !strings.Contains(errStr, "non-zero") {
+		t.Fatalf("error must mention zero direction; got %q", errStr)
+	}
+}
+
+func TestIntersectRayRejectsNegativeMaxDistance(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "intersect_ray", map[string]any{
+		"origin":       []float64{0, 0, 0},
+		"direction":    []float64{0, 0, -1},
+		"max_distance": -5.0,
+	}))
+	if env.Success {
+		t.Fatalf("want failure on negative max_distance, got %v", env)
+	}
+}
+
+func TestIntersectRaySurfacesHitPayload(t *testing.T) {
+	s := newSession(t)
+	s.fake.NextResult = mcpFrame(map[string]any{
+		"hit":         true,
+		"point":       []any{8.0, 0.75, 116.149},
+		"distance":    83.851,
+		"face_id":     float64(12345),
+		"group_name":  "Rafter W Gable F",
+		"face_normal": []any{0.447, 0.0, 0.894},
+	}, nil)
+	env := envelopeOf(t, s.call(t, "intersect_ray", map[string]any{
+		"origin":    []float64{8, 0.75, 200},
+		"direction": []float64{0, 0, -1},
+		"target":    "Rafter W Gable F",
+	}))
+	if !env.Success {
+		t.Fatalf("envelope: %v", env)
+	}
+	result := env.Result.(map[string]any)
+	if result["hit"] != true {
+		t.Fatalf("hit: %v", result["hit"])
+	}
+	if result["group_name"] != "Rafter W Gable F" {
+		t.Fatalf("group_name: %v", result["group_name"])
+	}
+	if !jsonEqual(result["point"], []any{8.0, 0.75, 116.149}) {
+		t.Fatalf("point: %v", result["point"])
+	}
+}
+
+func TestIntersectRaySurfacesMissPayload(t *testing.T) {
+	s := newSession(t)
+	s.fake.NextResult = mcpFrame(map[string]any{"hit": false}, nil)
+	env := envelopeOf(t, s.call(t, "intersect_ray", map[string]any{
+		"origin":    []float64{0, 0, 1000},
+		"direction": []float64{0, 0, 1},
+	}))
+	if !env.Success {
+		t.Fatalf("envelope: %v", env)
+	}
+	result := env.Result.(map[string]any)
+	if result["hit"] != false {
+		t.Fatalf("hit: %v", result["hit"])
+	}
+}
+
 // --- argument-name parity for every tool ------------------------------------
 
 func TestToolForwardsExpectedArguments(t *testing.T) {
