@@ -135,6 +135,16 @@ type MirrorPlane struct {
 	Normal []float64 `json:"normal"`
 }
 
+// ValidateGeometryInput backs the validate_geometry tool.
+//
+// Each assertion is a tagged-union dict keyed by "kind" (bounds, contact,
+// aligned, no_overlap). The remaining keys are kind-specific; Go-side checks
+// the kind enum and lets the Ruby handler validate per-kind shape. Read-only —
+// no entities are mutated.
+type ValidateGeometryInput struct {
+	Assertions []map[string]any `json:"assertions"`
+}
+
 // MirrorComponentInput backs the mirror_component tool.
 //
 // Address the source by exactly one of ID or Name. The mirror plane is given

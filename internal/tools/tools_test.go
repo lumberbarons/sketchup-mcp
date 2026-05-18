@@ -650,6 +650,107 @@ func TestMirrorComponentRejectsZeroNormal(t *testing.T) {
 	}
 }
 
+// --- validate_geometry ------------------------------------------------------
+
+func TestValidateGeometryForwardsAssertions(t *testing.T) {
+	s := newSession(t)
+	assertions := []any{
+		map[string]any{
+			"kind":   "bounds",
+			"name":   "WA TP1",
+			"target": "WA TP1",
+			"min":    []any{0.0, 0.0, 7.5},
+		},
+		map[string]any{
+			"kind":      "contact",
+			"a":         float64(101),
+			"b":         float64(102),
+			"axis":      "z",
+			"direction": "-",
+		},
+	}
+	_ = s.call(t, "validate_geometry", map[string]any{"assertions": assertions})
+	if s.fake.lastToolName(t) != "validate_geometry" {
+		t.Fatalf("tool name: %q", s.fake.lastToolName(t))
+	}
+	args := s.fake.lastArguments(t)
+	if !jsonEqual(args["assertions"], assertions) {
+		t.Fatalf("assertions:\n got  %v\n want %v", args["assertions"], assertions)
+	}
+}
+
+func TestValidateGeometryAcceptsEmptyAssertions(t *testing.T) {
+	s := newSession(t)
+	// Empty list is a valid no-op; the Ruby side returns {results:[], failed:0}.
+	_ = s.call(t, "validate_geometry", map[string]any{"assertions": []any{}})
+	if len(s.fake.Calls) != 1 {
+		t.Fatalf("ruby must be called even on empty input, got %d calls", len(s.fake.Calls))
+	}
+}
+
+func TestValidateGeometryRejectsUnknownKind(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "validate_geometry", map[string]any{
+		"assertions": []any{
+			map[string]any{"kind": "bounds", "target": "X"},
+			map[string]any{"kind": "smells_funny", "target": "Y"},
+		},
+	}))
+	if env.Success {
+		t.Fatalf("want failure on unknown kind, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatalf("ruby must not be called on validation failure, got %d", len(s.fake.Calls))
+	}
+	errStr, _ := env.Error.(string)
+	if !strings.Contains(errStr, "smells_funny") {
+		t.Fatalf("error must mention the offending kind; got %q", errStr)
+	}
+}
+
+func TestValidateGeometryRejectsMissingKind(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "validate_geometry", map[string]any{
+		"assertions": []any{
+			map[string]any{"target": "X"},
+		},
+	}))
+	if env.Success {
+		t.Fatalf("want failure on missing kind, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatalf("ruby must not be called on validation failure, got %d", len(s.fake.Calls))
+	}
+}
+
+func TestValidateGeometrySurfacesResultsPayload(t *testing.T) {
+	s := newSession(t)
+	s.fake.NextResult = mcpFrame(map[string]any{
+		"results": []any{
+			map[string]any{"name": "WA TP1", "kind": "bounds", "passed": true, "detail": "bounds within 0.0625\""},
+			map[string]any{"name": "header-z", "kind": "aligned", "passed": false, "detail": "min.z spread 1.5"},
+		},
+		"failed": float64(1),
+	}, nil)
+	env := envelopeOf(t, s.call(t, "validate_geometry", map[string]any{
+		"assertions": []any{
+			map[string]any{"kind": "bounds", "target": "WA TP1"},
+			map[string]any{"kind": "aligned", "targets": []any{"S1", "S2"}, "axis": "z", "side": "min"},
+		},
+	}))
+	if !env.Success {
+		t.Fatalf("envelope: %v", env)
+	}
+	result := env.Result.(map[string]any)
+	if result["failed"] != float64(1) {
+		t.Fatalf("failed: %v", result["failed"])
+	}
+	results, _ := result["results"].([]any)
+	if len(results) != 2 {
+		t.Fatalf("results length: %d", len(results))
+	}
+}
+
 // --- argument-name parity for every tool ------------------------------------
 
 func TestToolForwardsExpectedArguments(t *testing.T) {

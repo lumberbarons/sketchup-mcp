@@ -64,6 +64,7 @@ func TestRegisterAll_ExposesExpectedToolNames(t *testing.T) {
 		"replace_geometry",
 		"set_material",
 		"transform_component",
+		"validate_geometry",
 	}
 
 	if len(got) != len(want) {

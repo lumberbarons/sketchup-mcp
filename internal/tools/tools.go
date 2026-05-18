@@ -164,6 +164,7 @@ func RegisterAll(server *mcp.Server, s Sender) {
 	registerBooleanOp(server, s)
 	registerPatternLinear(server, s)
 	registerMirrorComponent(server, s)
+	registerValidateGeometry(server, s)
 	registerEvalRuby(server, s)
 }
 
@@ -597,6 +598,74 @@ func validateMirrorPlane(in MirrorComponentInput) error {
 		}
 		if in.Plane.Normal[0] == 0 && in.Plane.Normal[1] == 0 && in.Plane.Normal[2] == 0 {
 			return fmt.Errorf("plane.normal must be non-zero; got [0,0,0]")
+		}
+	}
+	return nil
+}
+
+func registerValidateGeometry(srv *mcp.Server, s Sender) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "validate_geometry",
+		Description: `Run a batch of read-only positional assertions against the active model.
+
+Useful for guarding invariants in stick-framed assemblies: corner-post lap
+contact, header heights, stud alignment, no-interference between pieces.
+The tool only reads — no entities are created, mutated, or deleted — so it
+is safe to call after every edit as a regression check.
+
+assertions is a list of tagged-union dicts. Each carries a "kind" plus an
+optional "name" (a human-readable label used in the result; auto-generated
+when absent). Default tolerance is 0.0625" (1/16 inch). Targets are
+addressed by exact group name (string) or entity ID (integer).
+
+Kinds:
+
+- {kind:"bounds", target, min:[x,y,z]|null, max:[x,y,z]|null, tolerance?}
+  Group's bounds.min / bounds.max must match within tolerance. A null on
+  either side skips that side.
+
+- {kind:"contact", a, b, axis:"x"|"y"|"z", direction:"+"|"-", tolerance?}
+  Group "a"'s face on the given axis/direction must touch group "b"'s
+  opposing face. E.g. axis="z", direction="-": a.bounds.min.z ≈ b.bounds.max.z.
+
+- {kind:"aligned", targets:[...], axis:"x"|"y"|"z",
+   side:"min"|"max"|"center", value:float|null, tolerance?}
+  All targets must share the same coordinate on the named axis/side.
+  When value is given, the shared coordinate must equal it within tolerance.
+
+- {kind:"no_overlap", targets:[...], tolerance?}
+  No two listed groups may have overlapping interiors. Penetration up to
+  tolerance on every axis is treated as a tight joint, not an overlap.
+
+Returns {results: [...], failed: <int>} where each result is
+{name, kind, passed, detail}. detail is short on pass and includes the
+observed value + delta on failure.`,
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in ValidateGeometryInput) (*mcp.CallToolResult, any, error) {
+		if err := validateAssertions(in.Assertions); err != nil {
+			return textResult(failureEnvelope(err.Error())), nil, nil
+		}
+		return callSketchup(s, "validate_geometry", in)
+	})
+}
+
+// validateAssertions sanity-checks the assertion list before crossing the
+// wire. Per-kind shape validation runs Ruby-side where it can also surface
+// resolution errors (target not found, etc.) as a failed assertion rather
+// than aborting the whole batch.
+func validateAssertions(assertions []map[string]any) error {
+	for i, a := range assertions {
+		kindAny, ok := a["kind"]
+		if !ok || kindAny == nil {
+			return fmt.Errorf("assertion #%d: kind is required", i)
+		}
+		kind, ok := kindAny.(string)
+		if !ok {
+			return fmt.Errorf("assertion #%d: kind must be a string, got %T", i, kindAny)
+		}
+		switch kind {
+		case "bounds", "contact", "aligned", "no_overlap":
+		default:
+			return fmt.Errorf("assertion #%d: unknown kind %q (expected bounds, contact, aligned, or no_overlap)", i, kind)
 		}
 	}
 	return nil

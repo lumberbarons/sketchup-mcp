@@ -248,6 +248,8 @@ module SU_MCP
           pattern_linear(args)
         when "mirror_component"
           mirror_component(args)
+        when "validate_geometry"
+          validate_geometry(args)
         when "chamfer_edges"
           chamfer_edges(args)
         when "fillet_edges"
@@ -1383,6 +1385,224 @@ module SU_MCP
       return false if emax.y < qmin[1] || emin.y > qmax[1]
       return false if emax.z < qmin[2] || emin.z > qmax[2]
       true
+    end
+
+    # Default contact / alignment / overlap tolerance, matched to the
+    # spec — 1/16" is the smallest dimension a framer reliably eyeballs.
+    DEFAULT_VALIDATE_TOLERANCE = 0.0625
+
+    def validate_geometry(params)
+      log "validate_geometry params: #{params.inspect}"
+      assertions = params["assertions"] || []
+      raise "'assertions' must be an array" unless assertions.is_a?(Array)
+
+      model = Sketchup.active_model
+      results = []
+      failed = 0
+
+      assertions.each_with_index do |a, i|
+        kind = a["kind"].to_s
+        label = (a["name"] && !a["name"].to_s.empty?) ? a["name"].to_s : "##{i} #{kind}"
+        outcome =
+          begin
+            case kind
+            when "bounds"     then run_bounds_assertion(a, model)
+            when "contact"    then run_contact_assertion(a, model)
+            when "aligned"    then run_aligned_assertion(a, model)
+            when "no_overlap" then run_no_overlap_assertion(a, model)
+            else { passed: false, detail: "unknown kind: #{kind.inspect}" }
+            end
+          rescue StandardError => e
+            { passed: false, detail: e.message }
+          end
+        failed += 1 unless outcome[:passed]
+        results << { name: label, kind: kind, passed: outcome[:passed], detail: outcome[:detail] }
+      end
+
+      { success: true, results: results, failed: failed }
+    end
+
+    # Resolve a single target by exact group name (string) or entity ID
+    # (integer). Mirrors resolve_entity's strict semantics — zero or multiple
+    # matches raise. Used only by validate_geometry; resolve_entity is the
+    # right helper anywhere that takes id|name params.
+    def resolve_validate_target(target, model)
+      raise "target is required" if target.nil?
+      if target.is_a?(Integer)
+        e = model.find_entity_by_id(target)
+        raise "Entity not found: id=#{target}" unless e
+        return e
+      end
+      if target.is_a?(String)
+        matches = model.entities.grep(Sketchup::Group).select { |g| g.name == target }
+        raise "No group found with name #{target.inspect}" if matches.empty?
+        if matches.length > 1
+          ids = matches.map(&:entityID)
+          raise "Multiple groups match name #{target.inspect} (IDs: #{ids.inspect})"
+        end
+        return matches.first
+      end
+      raise "target must be a string (name) or integer (id), got #{target.class}"
+    end
+
+    def run_bounds_assertion(a, model)
+      tol = (a["tolerance"] || DEFAULT_VALIDATE_TOLERANCE).to_f
+      entity = resolve_validate_target(a["target"], model)
+      errors = []
+      errors.concat(bounds_axis_errors(entity.bounds.min, a["min"], "min", tol)) if a["min"]
+      errors.concat(bounds_axis_errors(entity.bounds.max, a["max"], "max", tol)) if a["max"]
+      if errors.empty?
+        { passed: true, detail: "bounds within #{format_tol(tol)}" }
+      else
+        { passed: false, detail: errors.join("; ") }
+      end
+    end
+
+    # Pure: per-axis check of an observed Geom::Point3d-like point against
+    # an expected [x,y,z]. Returns an array of error strings, empty on pass.
+    # `label` is "min" or "max" for use in the error message.
+    def bounds_axis_errors(observed_point, expected_xyz, label, tolerance)
+      raise "expected_xyz must be [x,y,z]" unless expected_xyz.is_a?(Array) && expected_xyz.length == 3
+      errors = []
+      [:x, :y, :z].each_with_index do |axis, i|
+        obs = observed_point.send(axis).to_f
+        exp = expected_xyz[i].to_f
+        delta = (obs - exp).abs
+        if delta > tolerance
+          errors << "#{label}.#{axis}: expected #{format_num(exp)}, got #{format_num(obs)} (Δ #{format_num(delta)})"
+        end
+      end
+      errors
+    end
+
+    def run_contact_assertion(a, model)
+      tol = (a["tolerance"] || DEFAULT_VALIDATE_TOLERANCE).to_f
+      axis = a["axis"].to_s
+      direction = a["direction"].to_s
+      raise "axis must be x|y|z, got #{axis.inspect}" unless %w[x y z].include?(axis)
+      raise "direction must be + or -, got #{direction.inspect}" unless %w[+ -].include?(direction)
+      ent_a = resolve_validate_target(a["a"], model)
+      ent_b = resolve_validate_target(a["b"], model)
+      gap = contact_face_gap(ent_a.bounds.min, ent_a.bounds.max, ent_b.bounds.min, ent_b.bounds.max, axis, direction)
+      if gap <= tol
+        { passed: true, detail: "contact on #{direction}#{axis} within #{format_tol(tol)} (gap #{format_num(gap)})" }
+      else
+        { passed: false, detail: "contact gap on #{direction}#{axis}: #{format_num(gap)} (tolerance #{format_tol(tol)})" }
+      end
+    end
+
+    # Pure: signed gap between group a's face and group b's opposing face.
+    # axis+direction selects which face of `a` is being checked; the opposing
+    # face of `b` is the one that would meet it (a.max.z touches b.min.z when
+    # direction="+", axis="z"). Returns the absolute distance — touching = 0.
+    def contact_face_gap(a_min, a_max, b_min, b_max, axis, direction)
+      sym = axis.to_sym
+      a_face = direction == "+" ? a_max.send(sym).to_f : a_min.send(sym).to_f
+      b_face = direction == "+" ? b_min.send(sym).to_f : b_max.send(sym).to_f
+      (a_face - b_face).abs
+    end
+
+    def run_aligned_assertion(a, model)
+      tol = (a["tolerance"] || DEFAULT_VALIDATE_TOLERANCE).to_f
+      axis = a["axis"].to_s
+      side = a["side"].to_s
+      raise "axis must be x|y|z, got #{axis.inspect}" unless %w[x y z].include?(axis)
+      raise "side must be min|max|center, got #{side.inspect}" unless %w[min max center].include?(side)
+      targets = a["targets"]
+      raise "targets must be a non-empty array" unless targets.is_a?(Array) && !targets.empty?
+      coords = targets.map do |t|
+        e = resolve_validate_target(t, model)
+        point = case side
+                when "min"    then e.bounds.min
+                when "max"    then e.bounds.max
+                when "center" then e.bounds.center
+                end
+        point.send(axis.to_sym).to_f
+      end
+      spread, mean = alignment_stats(coords)
+      if spread > tol
+        return { passed: false,
+                 detail: "#{side}.#{axis} spread #{format_num(spread)} > tolerance #{format_tol(tol)} " \
+                         "(range [#{format_num(coords.min)}, #{format_num(coords.max)}])" }
+      end
+      if a.key?("value") && !a["value"].nil?
+        expected = a["value"].to_f
+        delta = (mean - expected).abs
+        if delta > tol
+          return { passed: false,
+                   detail: "#{side}.#{axis} = #{format_num(mean)} ≠ expected #{format_num(expected)} " \
+                           "(Δ #{format_num(delta)}, tolerance #{format_tol(tol)})" }
+        end
+      end
+      { passed: true, detail: "#{side}.#{axis} aligned within #{format_tol(tol)}" }
+    end
+
+    # Pure: spread (max - min) and mean of the given coords. Returns
+    # [0.0, 0.0] for an empty list so callers don't crash; in practice the
+    # caller guards against empties.
+    def alignment_stats(coords)
+      return [0.0, 0.0] if coords.empty?
+      cmin = coords.min
+      cmax = coords.max
+      mean = coords.inject(0.0) { |s, c| s + c } / coords.length
+      [cmax - cmin, mean]
+    end
+
+    def run_no_overlap_assertion(a, model)
+      tol = (a["tolerance"] || DEFAULT_VALIDATE_TOLERANCE).to_f
+      targets = a["targets"]
+      raise "targets must be a non-empty array" unless targets.is_a?(Array) && !targets.empty?
+      entities = targets.map { |t| resolve_validate_target(t, model) }
+      offenders = []
+      entities.each_with_index do |e1, i|
+        b1 = e1.bounds
+        (i + 1...entities.length).each do |j|
+          e2 = entities[j]
+          b2 = e2.bounds
+          ox, oy, oz = aabb_overlap_extents(b1.min, b1.max, b2.min, b2.max)
+          # Penetration must exceed tolerance on every axis for it to count
+          # as a real overlap; allowing one axis ≤ tol catches near-touches
+          # (sub-1/16" interpenetration at tight joints) and ignores them.
+          if ox > tol && oy > tol && oz > tol
+            offenders << "#{describe_for_overlap(e1)} ∩ #{describe_for_overlap(e2)} = " \
+                         "#{format_num(ox)}×#{format_num(oy)}×#{format_num(oz)}"
+          end
+        end
+      end
+      if offenders.empty?
+        { passed: true, detail: "no overlaps among #{entities.length} group(s) (tolerance #{format_tol(tol)})" }
+      else
+        head = offenders.first(3).join("; ")
+        more = offenders.length > 3 ? "; (#{offenders.length - 3} more)" : ""
+        { passed: false, detail: head + more }
+      end
+    end
+
+    # Pure: per-axis penetration depth between two AABBs. A negative or
+    # zero value on any axis means the boxes are clear (or just touching) on
+    # that axis. All three positive => the interiors overlap.
+    def aabb_overlap_extents(a_min, a_max, b_min, b_max)
+      [
+        [a_max.x.to_f, b_max.x.to_f].min - [a_min.x.to_f, b_min.x.to_f].max,
+        [a_max.y.to_f, b_max.y.to_f].min - [a_min.y.to_f, b_min.y.to_f].max,
+        [a_max.z.to_f, b_max.z.to_f].min - [a_min.z.to_f, b_min.z.to_f].max,
+      ]
+    end
+
+    def describe_for_overlap(entity)
+      name = entity.respond_to?(:name) ? entity.name.to_s : ""
+      name.empty? ? "id=#{entity.entityID}" : name
+    end
+
+    # Trim trailing zeros from numeric details so passes read tersely
+    # ('within 0.0625"' not '0.0625000000...') and failures don't bury the
+    # actual delta in noise.
+    def format_num(n)
+      "%g" % n.to_f
+    end
+
+    def format_tol(t)
+      "#{format_num(t)}\""
     end
 
     def inspect_geometry(params)
