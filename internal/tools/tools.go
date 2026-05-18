@@ -163,6 +163,7 @@ func RegisterAll(server *mcp.Server, s Sender) {
 	registerExportScene(server, s)
 	registerBooleanOp(server, s)
 	registerPatternLinear(server, s)
+	registerMirrorComponent(server, s)
 	registerEvalRuby(server, s)
 }
 
@@ -234,7 +235,18 @@ name) — same as transform_component/delete_component elsewhere. Legacy
   - translate: id|name, position [dx,dy,dz] (relative).
   - move_to:   id|name, target [x,y,z] (absolute bounds.min).
   - delete:    id|name.
-  - replace:   id|name, geometry dict (see replace_geometry).`,
+  - replace:   id|name, geometry dict (see replace_geometry).
+
+Replicate/reflect ops chain with create ops to atomically produce
+symmetric or repeating structures in one transaction:
+  - pattern_linear: id|name, vector [dx,dy,dz], count N. Optional
+    include_source, name_template. Same semantics as the standalone
+    pattern_linear tool. Sources created earlier in the batch can be
+    addressed by name.
+  - mirror: id|name, plus a mirror plane. Either axis "x"|"y"|"z" +
+    offset (axis-aligned shorthand) OR plane {origin, normal}. Optional
+    include_source (default true; pass false to flip the source in
+    place), name_template.`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in BatchCreateInput) (*mcp.CallToolResult, any, error) {
 		return callSketchup(s, "batch_create", in)
 	})
@@ -393,6 +405,77 @@ Returns ids of the new groups in order, plus the count actually created.`,
 		}
 		return callSketchup(s, "pattern_linear", in)
 	})
+}
+
+func registerMirrorComponent(srv *mcp.Server, s Sender) {
+	mcp.AddTool(srv, &mcp.Tool{
+		Name: "mirror_component",
+		Description: `Reflect a Group across a plane — the bilateral-symmetry counterpart to pattern_linear.
+
+Address the source by exactly one of id (entityID) or name (exact match
+against a top-level Group name).
+
+Specify the mirror plane in exactly one of two forms:
+1) Axis-aligned shorthand: axis="x"|"y"|"z" + offset=<coordinate>.
+   E.g. axis="x", offset=60.5 mirrors across the plane x=60.5.
+2) Arbitrary plane: plane={origin: [x,y,z], normal: [x,y,z]}. The normal
+   is normalized internally; it does not need to be unit length.
+
+include_source defaults true: the source is preserved and a mirrored
+copy is created in the source's parent entities. Pass false to flip the
+source in place (no copy made) — useful for orienting a single piece
+rather than producing a symmetric pair.
+
+Copy naming follows the same convention as pattern_linear: by default
+the new group continues the source's trailing-integer sequence
+("Rafter W 5" → "Rafter W 6"), or appends " 2" otherwise. Override with
+name_template, which supports {src}/{base}/{n}/{i} placeholders. A
+template with no placeholders works as a literal new name (e.g.
+"Rafter E 1").
+
+Returns id, name, and bounds {min, max} for the resulting group.`,
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in MirrorComponentInput) (*mcp.CallToolResult, any, error) {
+		if err := validateMirrorPlane(in); err != nil {
+			return textResult(failureEnvelope(err.Error())), nil, nil
+		}
+		return callSketchup(s, "mirror_component", in)
+	})
+}
+
+// validateMirrorPlane enforces the axis-vs-plane mutual exclusion on the Go
+// side so malformed calls are rejected before crossing the wire. Numeric
+// content (offset, normal magnitude) is validated on the Ruby side.
+func validateMirrorPlane(in MirrorComponentInput) error {
+	hasAxis := in.Axis != nil
+	hasPlane := in.Plane != nil
+	if hasAxis && hasPlane {
+		return fmt.Errorf("provide exactly one of axis+offset or plane, not both")
+	}
+	if !hasAxis && !hasPlane {
+		return fmt.Errorf("provide a mirror plane: axis+offset or plane {origin, normal}")
+	}
+	if hasAxis {
+		switch *in.Axis {
+		case "x", "y", "z":
+		default:
+			return fmt.Errorf("axis must be \"x\", \"y\", or \"z\"; got %q", *in.Axis)
+		}
+		if in.Offset == nil {
+			return fmt.Errorf("offset is required with axis")
+		}
+	}
+	if hasPlane {
+		if len(in.Plane.Origin) != 3 {
+			return fmt.Errorf("plane.origin must have 3 elements [x,y,z], got %d", len(in.Plane.Origin))
+		}
+		if len(in.Plane.Normal) != 3 {
+			return fmt.Errorf("plane.normal must have 3 elements [x,y,z], got %d", len(in.Plane.Normal))
+		}
+		if in.Plane.Normal[0] == 0 && in.Plane.Normal[1] == 0 && in.Plane.Normal[2] == 0 {
+			return fmt.Errorf("plane.normal must be non-zero; got [0,0,0]")
+		}
+	}
+	return nil
 }
 
 func registerEvalRuby(srv *mcp.Server, s Sender) {

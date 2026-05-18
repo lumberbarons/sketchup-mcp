@@ -162,7 +162,7 @@ class TestBatchCreate < Minitest::Test
 
   def test_validate_accepts_every_known_op
     s = TestServer.new
-    %w[cube cylinder sphere cone extrusion translate move_to delete].each do |op_name|
+    %w[cube cylinder sphere cone extrusion translate move_to delete replace pattern_linear mirror].each do |op_name|
       # Should not raise for the valid op_name…
       s.send(:validate_batch_op, { "op" => op_name }, 0)
       # …and must raise for a perturbed variant. Pairing valid with invalid
@@ -322,6 +322,14 @@ class DispatchSpyServer < TestServer
   def transform_component(params)
     @calls << [:transform_component, params]
     { id: 3, success: true }
+  end
+  def pattern_linear(params)
+    @calls << [:pattern_linear, params]
+    { id: 4, success: true }
+  end
+  def mirror_component(params)
+    @calls << [:mirror_component, params]
+    { id: 5, success: true }
   end
   def resolve_entity(params, _model = nil)
     @calls << [:resolve_entity, params]
@@ -504,5 +512,89 @@ class TestExecuteBatchOpDispatch < Minitest::Test
     _method, params = @server.calls.first
     assert_equal 7, params["id"]
     refute params.key?("name")
+  end
+
+  # -- pattern_linear op (sch-ucc) -----------------------------------------
+
+  def test_pattern_linear_op_dispatches_with_vector_and_count
+    op = { "op" => "pattern_linear", "name" => "Stud 1", "vector" => [16, 0, 0], "count" => 6 }
+    @server.send(:execute_batch_op, op)
+    method, params = @server.calls.first
+    assert_equal :pattern_linear, method
+    assert_equal "Stud 1", params["name"]
+    assert_equal [16, 0, 0], params["vector"]
+    assert_equal 6, params["count"]
+  end
+
+  def test_pattern_linear_op_forwards_include_source_and_name_template
+    op = {
+      "op" => "pattern_linear", "id" => 42, "vector" => [0, 16, 0], "count" => 3,
+      "include_source" => false, "name_template" => "Stud {n}"
+    }
+    @server.send(:execute_batch_op, op)
+    _method, params = @server.calls.first
+    assert_equal 42, params["id"]
+    assert_equal false, params["include_source"]
+    assert_equal "Stud {n}", params["name_template"]
+  end
+
+  def test_pattern_linear_op_omits_unset_optionals
+    # When the op doesn't carry include_source/name_template, the forwarded
+    # params hash must not invent default keys — pattern_linear's own
+    # defaulting (include_source=true) must remain authoritative.
+    op = { "op" => "pattern_linear", "name" => "S", "vector" => [1, 0, 0], "count" => 1 }
+    @server.send(:execute_batch_op, op)
+    _method, params = @server.calls.first
+    refute params.key?("include_source")
+    refute params.key?("name_template")
+  end
+
+  # -- mirror op (sch-ds4) ------------------------------------------------
+
+  def test_mirror_op_dispatches_with_axis_form
+    op = { "op" => "mirror", "name" => "Rafter W 1", "axis" => "x", "offset" => 60.5 }
+    @server.send(:execute_batch_op, op)
+    method, params = @server.calls.first
+    assert_equal :mirror_component, method
+    assert_equal "Rafter W 1", params["name"]
+    assert_equal "x", params["axis"]
+    assert_equal 60.5, params["offset"]
+  end
+
+  def test_mirror_op_dispatches_with_plane_form
+    op = {
+      "op" => "mirror", "id" => 42,
+      "plane" => { "origin" => [0, 0, 0], "normal" => [1, 1, 0] }
+    }
+    @server.send(:execute_batch_op, op)
+    _method, params = @server.calls.first
+    assert_equal 42, params["id"]
+    assert_equal({ "origin" => [0, 0, 0], "normal" => [1, 1, 0] }, params["plane"])
+    refute params.key?("axis")
+    refute params.key?("offset")
+  end
+
+  def test_mirror_op_forwards_name_template
+    op = {
+      "op" => "mirror", "name" => "Rafter W 1", "axis" => "x", "offset" => 10,
+      "name_template" => "Rafter E 1"
+    }
+    @server.send(:execute_batch_op, op)
+    _method, params = @server.calls.first
+    # "name" is the source addressing key (resolves to the existing group);
+    # "name_template" is how the caller names the new mirrored copy. The
+    # mirror_component handler uses pattern_linear's naming helpers so a
+    # template with no placeholders behaves as a literal new name.
+    assert_equal "Rafter W 1", params["name"]
+    assert_equal "Rafter E 1", params["name_template"]
+  end
+
+  def test_mirror_op_omits_unset_optionals
+    op = { "op" => "mirror", "id" => 99, "axis" => "y", "offset" => 0 }
+    @server.send(:execute_batch_op, op)
+    _method, params = @server.calls.first
+    refute params.key?("name_template")
+    refute params.key?("include_source")
+    refute params.key?("plane")
   end
 end

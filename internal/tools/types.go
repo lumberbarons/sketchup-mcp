@@ -128,3 +128,30 @@ type PatternLinearInput struct {
 	IncludeSource *bool     `json:"include_source,omitempty"`
 	NameTemplate  *string   `json:"name_template,omitempty"`
 }
+
+// MirrorPlane is the {origin, normal} form of the mirror plane.
+type MirrorPlane struct {
+	Origin []float64 `json:"origin"`
+	Normal []float64 `json:"normal"`
+}
+
+// MirrorComponentInput backs the mirror_component tool.
+//
+// Address the source by exactly one of ID or Name. The mirror plane is given
+// in one of two mutually exclusive forms: (1) axis-aligned shorthand —
+// Axis="x"|"y"|"z" plus Offset, meaning "the plane perpendicular to that axis
+// at that coordinate" (e.g. Axis="x", Offset=60.5 → x=60.5); or (2) arbitrary
+// — Plane with origin + normal. IncludeSource defaults true; pass false to
+// reflect the source in place (flip it) rather than producing a symmetric
+// pair. NameTemplate uses the same {src}/{base}/{n}/{i} placeholders as
+// pattern_linear — a template with no placeholders behaves as a literal new
+// name for the mirrored copy.
+type MirrorComponentInput struct {
+	ID            *string      `json:"id,omitempty"`
+	Name          *string      `json:"name,omitempty"`
+	Axis          *string      `json:"axis,omitempty"`
+	Offset        *float64     `json:"offset,omitempty"`
+	Plane         *MirrorPlane `json:"plane,omitempty"`
+	IncludeSource *bool        `json:"include_source,omitempty"`
+	NameTemplate  *string      `json:"name_template,omitempty"`
+}

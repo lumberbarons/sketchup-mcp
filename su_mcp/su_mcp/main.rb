@@ -246,6 +246,8 @@ module SU_MCP
           boolean_operation(args)
         when "pattern_linear"
           pattern_linear(args)
+        when "mirror_component"
+          mirror_component(args)
         when "chamfer_edges"
           chamfer_edges(args)
         when "fillet_edges"
@@ -777,7 +779,7 @@ module SU_MCP
       set_material({ "id" => group.entityID, "material" => material_name })
     end
 
-    KNOWN_BATCH_OPS = %w[cube cylinder sphere cone extrusion translate move_to delete replace].freeze
+    KNOWN_BATCH_OPS = %w[cube cylinder sphere cone extrusion translate move_to delete replace pattern_linear mirror].freeze
 
     # Run many create / mutate / delete ops as a single SketchUp transaction.
     # The whole batch is one undo step. Any exception during dispatch aborts
@@ -850,6 +852,26 @@ module SU_MCP
         replace_params = addressing_params(op).merge("geometry" => op["geometry"])
         replace_params["recursive"] = op["recursive"] if op.key?("recursive")
         replace_geometry(replace_params)
+      when "pattern_linear"
+        # Same atomicity model as translate/delete: address by name and the
+        # source created earlier in this same batch resolves fine because
+        # named entities are visible mid-transaction. Pattern's own
+        # start_operation nests inside batch_create's outer transaction.
+        params = addressing_params(op).merge(
+          "vector" => op["vector"],
+          "count" => op["count"]
+        )
+        params["include_source"] = op["include_source"] if op.key?("include_source")
+        params["name_template"] = op["name_template"] if op.key?("name_template")
+        pattern_linear(params)
+      when "mirror"
+        params = addressing_params(op)
+        params["axis"] = op["axis"] if op.key?("axis")
+        params["offset"] = op["offset"] if op.key?("offset")
+        params["plane"] = op["plane"] if op.key?("plane")
+        params["name_template"] = op["name_template"] if op.key?("name_template")
+        params["include_source"] = op["include_source"] if op.key?("include_source")
+        mirror_component(params)
       else
         # validate_batch_op already screened this; defensive only.
         raise "Unknown batch op: #{op["op"].inspect}"
@@ -1111,6 +1133,133 @@ module SU_MCP
     def pattern_linear_taken_names(model)
       return [] if model.nil?
       model.entities.grep(Sketchup::Group).map { |g| g.name.to_s }
+    end
+
+    # Reflect a top-level Group across a plane. Mirror is the natural
+    # counterpart to pattern_linear: where pattern handles translational
+    # repetition, mirror handles bilateral symmetry. Same addressing rules
+    # (id or name, exactly one).
+    #
+    # Plane specification — exactly one of:
+    #   axis + offset (axis-aligned shorthand):
+    #     axis: "x"|"y"|"z" — the world axis the plane is perpendicular to.
+    #     offset: numeric coordinate on that axis (e.g. axis="x", offset=60.5
+    #     mirrors across the plane x=60.5).
+    #   plane: { "origin" => [x,y,z], "normal" => [x,y,z] } for arbitrary planes.
+    #
+    # include_source defaults true (the source is preserved and a new mirrored
+    # copy is created). Pass false to mirror the source in place — useful for
+    # flipping a single piece rather than producing a symmetric pair.
+    #
+    # Naming: same auto-suffix and name_template contract as pattern_linear.
+    # No separate "name" override — "name" is reserved for source addressing
+    # (same convention as transform_component / delete_component / pattern_linear)
+    # to avoid the dual-role collision where the same key would mean both
+    # "find this group" and "rename the copy to this". For a fixed new name,
+    # pass name_template with no placeholders (e.g. "Rafter E 1").
+    def mirror_component(params)
+      raise "name_template must be a String" if params.key?("name_template") && !params["name_template"].nil? && !params["name_template"].is_a?(String)
+
+      origin, normal = resolve_mirror_plane(params)
+      source = resolve_entity(params)
+      include_source = params.key?("include_source") ? params["include_source"] : true
+
+      matrix = build_mirror_matrix(origin, normal)
+      reflection = Geom::Transformation.new(matrix)
+
+      base, start_n = pattern_linear_naming_seed(source.name.to_s)
+      taken = pattern_linear_taken_names(Sketchup.active_model)
+
+      model = Sketchup.active_model
+      model.start_operation("mirror_component", true)
+      begin
+        target = include_source ? source.copy : source
+        target.transform!(reflection)
+        # In-place mirrors (include_source=false) keep the source's name; only
+        # named copies get a fresh sequence number, matching pattern_linear's
+        # behavior.
+        if include_source && !source.name.to_s.empty?
+          new_name, = pattern_linear_copy_name(
+            template: params["name_template"],
+            src: source.name.to_s,
+            base: base,
+            i: 1,
+            start_n: start_n,
+            taken: taken
+          )
+          target.name = new_name
+        end
+        model.commit_operation
+        out = bounds_result(target)
+        out[:name] = target.name
+        out
+      rescue StandardError
+        model.abort_operation
+        raise
+      end
+    end
+
+    # Pure: resolve the mirror plane params into [[ox, oy, oz], [nx, ny, nz]],
+    # where the normal is unit-length. Raises if both forms are given, neither
+    # is given, the axis is unknown, or the normal is zero. The axis-aligned
+    # shorthand ({axis, offset}) is the dominant case; {plane: {origin,
+    # normal}} is the escape hatch for arbitrary planes.
+    def resolve_mirror_plane(params)
+      has_axis = params.key?("axis") && !params["axis"].nil?
+      has_plane = params.key?("plane") && !params["plane"].nil?
+
+      raise "Provide exactly one of 'axis'+'offset' or 'plane', not both" if has_axis && has_plane
+      raise "Provide a mirror plane: 'axis'+'offset' or 'plane' {origin, normal}" unless has_axis || has_plane
+
+      if has_axis
+        axis = params["axis"].to_s
+        unless params.key?("offset") && !params["offset"].nil?
+          raise "'offset' (numeric) is required with 'axis'"
+        end
+        offset = params["offset"]
+        raise "'offset' must be numeric" unless offset.is_a?(Numeric)
+        case axis
+        when "x" then [[offset.to_f, 0.0, 0.0], [1.0, 0.0, 0.0]]
+        when "y" then [[0.0, offset.to_f, 0.0], [0.0, 1.0, 0.0]]
+        when "z" then [[0.0, 0.0, offset.to_f], [0.0, 0.0, 1.0]]
+        else
+          raise "axis must be \"x\", \"y\", or \"z\"; got #{axis.inspect}"
+        end
+      else
+        plane = params["plane"]
+        raise "plane must be a Hash with 'origin' and 'normal'" unless plane.is_a?(Hash)
+        origin = plane["origin"]
+        normal = plane["normal"]
+        unless origin.is_a?(Array) && origin.length == 3 && origin.all? { |c| c.is_a?(Numeric) }
+          raise "plane.origin must be [x,y,z] numerics"
+        end
+        unless normal.is_a?(Array) && normal.length == 3 && normal.all? { |c| c.is_a?(Numeric) }
+          raise "plane.normal must be [x,y,z] numerics"
+        end
+        nx, ny, nz = normal.map(&:to_f)
+        mag = Math.sqrt(nx * nx + ny * ny + nz * nz)
+        raise "plane.normal must be non-zero" if mag.zero?
+        [[origin[0].to_f, origin[1].to_f, origin[2].to_f], [nx / mag, ny / mag, nz / mag]]
+      end
+    end
+
+    # Pure: build a 16-element column-major reflection matrix for a plane
+    # through `origin` with unit `normal`. Reflection of point p:
+    #   p' = (I - 2 n n^T) p + 2 (O·n) n
+    # The 3×3 part is symmetric; column j is e_j - 2 n_j n. Translation is
+    # 2 (O·n) n. Output layout matches Geom::Transformation.new's expected
+    # column-major order: cols 1-3 carry basis-vector images, col 4 carries
+    # the translation with a trailing 1.
+    def build_mirror_matrix(origin, normal)
+      ox, oy, oz = origin
+      nx, ny, nz = normal
+      d = 2.0 * (ox * nx + oy * ny + oz * nz)
+      [
+        1.0 - 2.0 * nx * nx, -2.0 * nx * ny,       -2.0 * nx * nz,       0.0,
+        -2.0 * nx * ny,       1.0 - 2.0 * ny * ny, -2.0 * ny * nz,       0.0,
+        -2.0 * nx * nz,      -2.0 * ny * nz,        1.0 - 2.0 * nz * nz, 0.0,
+        d * nx,               d * ny,               d * nz,              1.0
+      ]
     end
 
     # Pure: compute the name for the next copy. With a template, substitute

@@ -122,6 +122,8 @@ binary lives on your `PATH`).
 * `find_groups` — Query the model for groups by name prefix, regex, bounds intersection, or parent
 * `batch_create` — Run many create / mutate / delete operations as one SketchUp transaction (one undo step)
 * `boolean_op` — CSG via SketchUp Pro's Solid Tools (union, subtract, intersect, outer_shell) — produces a manifold solid
+* `pattern_linear` — Replicate a Group along a vector (linear array) — typical for studs, rafters, fence posts
+* `mirror_component` — Reflect a Group across a plane (bilateral symmetry counterpart to `pattern_linear`)
 * `get_selection` — Get information about currently selected components
 * `set_material` — Apply a material or color to a component
 * `export_scene` — Export the current scene (default format: `skp`)

@@ -501,6 +501,155 @@ func TestPatternLinearSurfacesIDsPayload(t *testing.T) {
 	}
 }
 
+// --- mirror_component -------------------------------------------------------
+
+func TestMirrorComponentForwardsAxisForm(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "mirror_component", map[string]any{
+		"name":   "Rafter W 1",
+		"axis":   "x",
+		"offset": 60.5,
+	})
+	if s.fake.lastToolName(t) != "mirror_component" {
+		t.Fatal("tool name")
+	}
+	want := map[string]any{
+		"name":   "Rafter W 1",
+		"axis":   "x",
+		"offset": 60.5,
+	}
+	if !jsonEqual(s.fake.lastArguments(t), want) {
+		t.Fatalf("args: %v", s.fake.lastArguments(t))
+	}
+}
+
+func TestMirrorComponentForwardsPlaneForm(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "mirror_component", map[string]any{
+		"id": "42",
+		"plane": map[string]any{
+			"origin": []float64{0, 0, 0},
+			"normal": []float64{1, 1, 0},
+		},
+	})
+	args := s.fake.lastArguments(t)
+	mustHave(t, args, "id", "42")
+	mustHave(t, args, "plane", map[string]any{
+		"origin": []float64{0, 0, 0},
+		"normal": []float64{1, 1, 0},
+	})
+	mustNotHave(t, args, "axis")
+	mustNotHave(t, args, "offset")
+}
+
+func TestMirrorComponentForwardsIncludeSourceFalse(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "mirror_component", map[string]any{
+		"id":             "1",
+		"axis":           "y",
+		"offset":         0,
+		"include_source": false,
+	})
+	mustHave(t, s.fake.lastArguments(t), "include_source", false)
+}
+
+func TestMirrorComponentOmitsUnsetOptionals(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "mirror_component", map[string]any{
+		"name":   "Wall",
+		"axis":   "x",
+		"offset": 0,
+	})
+	args := s.fake.lastArguments(t)
+	for _, k := range []string{"include_source", "name_template", "plane", "id"} {
+		mustNotHave(t, args, k)
+	}
+}
+
+func TestMirrorComponentForwardsNameTemplate(t *testing.T) {
+	s := newSession(t)
+	_ = s.call(t, "mirror_component", map[string]any{
+		"name":          "Rafter W 1",
+		"axis":          "x",
+		"offset":        60.5,
+		"name_template": "Rafter E {n}",
+	})
+	mustHave(t, s.fake.lastArguments(t), "name_template", "Rafter E {n}")
+}
+
+func TestMirrorComponentRejectsBothAxisAndPlane(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "mirror_component", map[string]any{
+		"id":     "1",
+		"axis":   "x",
+		"offset": 0,
+		"plane":  map[string]any{"origin": []float64{0, 0, 0}, "normal": []float64{1, 0, 0}},
+	}))
+	if env.Success {
+		t.Fatalf("want failure, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatalf("Ruby must not be called on validation failure, got %d", len(s.fake.Calls))
+	}
+}
+
+func TestMirrorComponentRejectsNeitherAxisNorPlane(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "mirror_component", map[string]any{"id": "1"}))
+	if env.Success {
+		t.Fatalf("want failure, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatalf("Ruby must not be called on validation failure, got %d", len(s.fake.Calls))
+	}
+}
+
+func TestMirrorComponentRejectsUnknownAxis(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "mirror_component", map[string]any{
+		"id":     "1",
+		"axis":   "w",
+		"offset": 0,
+	}))
+	if env.Success {
+		t.Fatalf("want failure, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatal("Ruby must not be called on validation failure")
+	}
+}
+
+func TestMirrorComponentRejectsAxisMissingOffset(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "mirror_component", map[string]any{
+		"id":   "1",
+		"axis": "x",
+	}))
+	if env.Success {
+		t.Fatalf("want failure, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatal("Ruby must not be called on validation failure")
+	}
+}
+
+func TestMirrorComponentRejectsZeroNormal(t *testing.T) {
+	s := newSession(t)
+	env := envelopeOf(t, s.call(t, "mirror_component", map[string]any{
+		"id": "1",
+		"plane": map[string]any{
+			"origin": []float64{0, 0, 0},
+			"normal": []float64{0, 0, 0},
+		},
+	}))
+	if env.Success {
+		t.Fatalf("want failure, got %v", env)
+	}
+	if len(s.fake.Calls) != 0 {
+		t.Fatal("Ruby must not be called on validation failure")
+	}
+}
+
 // --- argument-name parity for every tool ------------------------------------
 
 func TestToolForwardsExpectedArguments(t *testing.T) {
@@ -1460,6 +1609,46 @@ func TestBatchCreateFailureEnvelopeRoundTrip(t *testing.T) {
 	errStr, _ := env.Error.(string)
 	if !strings.Contains(errStr, "operation #2") || !strings.Contains(errStr, "rolled back") {
 		t.Fatalf("error message: %q", errStr)
+	}
+}
+
+func TestBatchCreateForwardsPatternLinearOp(t *testing.T) {
+	// Create-then-pattern in one batch is the whole point of sch-ucc: the
+	// source is named by the create op and addressed by name from the
+	// pattern_linear op, all atomic in one transaction.
+	s := newSession(t)
+	ops := []map[string]any{
+		{"op": "cube", "name": "Stud 1", "position": []float64{0, 0, 0}, "dimensions": []float64{1.5, 3.5, 96}},
+		{"op": "pattern_linear", "name": "Stud 1", "vector": []float64{16, 0, 0}, "count": 6},
+	}
+	_ = s.call(t, "batch_create", map[string]any{"operations": ops})
+	want := map[string]any{"operations": ops}
+	if !jsonEqual(s.fake.lastArguments(t), want) {
+		t.Fatalf("args: %v", s.fake.lastArguments(t))
+	}
+}
+
+func TestBatchCreateForwardsMirrorOp(t *testing.T) {
+	// Mirror-an-inline-source: the east-slope rafter set can be derived from
+	// the west-slope set in one batch via mirror. Confirms the wire shape
+	// (axis form) and the inline-source-by-name pattern.
+	s := newSession(t)
+	ops := []map[string]any{
+		{
+			"op": "extrusion", "name": "Rafter W 1",
+			"profile":      [][]float64{{0, 106}, {59.75, 135.875}, {59.75, 142.024}, {0, 112.149}},
+			"extrude_axis": "y", "extrude_from": 0.0, "extrude_to": 1.5,
+		},
+		{
+			"op": "mirror", "name": "Rafter W 1",
+			"axis": "x", "offset": 60.5,
+			"name_template": "Rafter E 1",
+		},
+	}
+	_ = s.call(t, "batch_create", map[string]any{"operations": ops})
+	want := map[string]any{"operations": ops}
+	if !jsonEqual(s.fake.lastArguments(t), want) {
+		t.Fatalf("args: %v", s.fake.lastArguments(t))
 	}
 }
 
