@@ -908,6 +908,25 @@ func TestIntersectRaySurfacesMissPayload(t *testing.T) {
 	}
 }
 
+func TestIntersectRaySurfacesMissReason(t *testing.T) {
+	// A miss caused by max_distance / step-cap exhaustion carries `reason`
+	// so callers can distinguish "ray genuinely missed" from "safety cap fired".
+	s := newSession(t)
+	s.fake.NextResult = mcpFrame(map[string]any{
+		"hit":    false,
+		"reason": "step_cap_exceeded",
+	}, nil)
+	env := envelopeOf(t, s.call(t, "intersect_ray", map[string]any{
+		"origin":    []float64{0, 0, 0},
+		"direction": []float64{0, 0, 1},
+		"target":    "Ghost",
+	}))
+	result := env.Result.(map[string]any)
+	if result["reason"] != "step_cap_exceeded" {
+		t.Fatalf("reason: %v", result["reason"])
+	}
+}
+
 // --- argument-name parity for every tool ------------------------------------
 
 func TestToolForwardsExpectedArguments(t *testing.T) {

@@ -724,14 +724,17 @@ target: optional. Restrict the hit to geometry inside this group: pass an
     exact top-level group name (string) or an entity ID (integer). When
     omitted, any visible geometry can match. The hit search advances past
     intermediate faces until one inside the target is found (or the ray
-    exits all geometry / hits the max_distance cap).
+    exits all geometry / hits the max_distance cap / 256-skip safety cap).
 max_distance: optional cap on hit distance (inches). Default unbounded.
 include_back_faces: optional, default false. When false, hits where the ray
     strikes a face from behind (ray · face_normal_world > 0) are skipped —
     the usual "first front face" semantic. Pass true to accept any face.
 
-Returns {hit:true, point:[x,y,z], distance, face_id, group_name,
-face_normal:[x,y,z]} on a hit, or {hit:false} when the ray misses.
+Returns {hit:true, point:[x,y,z], distance, face_id, group_name, group_id,
+face_normal:[x,y,z]} on a hit, or {hit:false} when the ray misses. A miss
+caused by the max_distance cap or the skip-step safety cap carries a
+"reason" field ("max_distance_exceeded" / "step_cap_exceeded") so an
+unexpected miss is debuggable.
 
 Examples:
 
@@ -743,8 +746,9 @@ Examples:
   {"origin": [60.5, 0.75, 200], "direction": [0, 0, -1],
    "target": "Ridge Board"}
 
-  # Where does a plumb line from the eave hit the deck?
-  {"origin": [12, 24, 200], "direction": [0, 0, -1], "target": "Deck"}`,
+  # Furniture: where does a tapered leg's outer face sit at stretcher height?
+  # (cast horizontally from inside the leg outward, return distance)
+  {"origin": [2, 2, 12], "direction": [1, 0, 0], "target": "Leg FL"}`,
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in IntersectRayInput) (*mcp.CallToolResult, any, error) {
 		if err := validateIntersectRayInput(in); err != nil {
 			return textResult(failureEnvelope(err.Error())), nil, nil
