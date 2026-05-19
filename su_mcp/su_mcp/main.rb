@@ -1554,9 +1554,31 @@ module SU_MCP
 
     def run_no_overlap_assertion(a, model)
       tol = (a["tolerance"] || DEFAULT_VALIDATE_TOLERANCE).to_f
+      mode = (a["mode"] || "aabb").to_s
+      unless %w[aabb obb].include?(mode)
+        raise "no_overlap.mode must be \"aabb\" or \"obb\", got #{mode.inspect}"
+      end
       targets = a["targets"]
       raise "targets must be a non-empty array" unless targets.is_a?(Array) && !targets.empty?
       entities = targets.map { |t| resolve_validate_target(t, model) }
+      offenders =
+        if mode == "obb"
+          find_obb_overlap_offenders(entities, tol)
+        else
+          find_aabb_overlap_offenders(entities, tol)
+        end
+      if offenders.empty?
+        { passed: true,
+          detail: "no overlaps among #{entities.length} group(s) " \
+                  "(#{mode}, tolerance #{format_tol(tol)})" }
+      else
+        head = offenders.first(3).join("; ")
+        more = offenders.length > 3 ? "; (#{offenders.length - 3} more)" : ""
+        { passed: false, detail: head + more }
+      end
+    end
+
+    def find_aabb_overlap_offenders(entities, tol)
       offenders = []
       entities.each_with_index do |e1, i|
         b1 = e1.bounds
@@ -1573,13 +1595,156 @@ module SU_MCP
           end
         end
       end
-      if offenders.empty?
-        { passed: true, detail: "no overlaps among #{entities.length} group(s) (tolerance #{format_tol(tol)})" }
-      else
-        head = offenders.first(3).join("; ")
-        more = offenders.length > 3 ? "; (#{offenders.length - 3} more)" : ""
-        { passed: false, detail: head + more }
+      offenders
+    end
+
+    def find_obb_overlap_offenders(entities, tol)
+      obbs = entities.map { |e| group_obb(e) }
+      offenders = []
+      entities.each_with_index do |e1, i|
+        oa = obbs[i]
+        (i + 1...entities.length).each do |j|
+          ob = obbs[j]
+          depth = obb_overlap_depth(oa[:center], oa[:axes], ob[:center], ob[:axes])
+          # Same tolerance semantic as AABB: penetration up to tolerance is
+          # treated as a tight joint, not an overlap. Depth here is the
+          # minimum penetration over all SAT axes — the smallest distance
+          # one box would need to move to escape the other.
+          if depth > tol
+            offenders << "#{describe_for_overlap(entities[i])} ∩ #{describe_for_overlap(entities[j])} = " \
+                         "depth #{format_num(depth)}\""
+          end
+        end
       end
+      offenders
+    end
+
+    # Build a world-space OBB for a Group / ComponentInstance from its
+    # definition-frame AABB and its transformation. The local-frame AABB
+    # tightly wraps the piece's geometry in its modeling axes (e.g. a sloped
+    # 2×6 modeled on the X axis has a local bounds of width=length, height=5.5,
+    # depth=1.5 regardless of slope), so the world-space box obtained by
+    # rotating/translating it is the natural "tight" oriented box for stick-
+    # framing pieces.
+    #
+    # Falls back to the world AABB when the entity has no definition-frame
+    # bounds (rare — degenerate / non-instanced shapes). In that case OBB
+    # behaves the same as AABB for that piece.
+    #
+    # Returns {center: [x,y,z], axes: [[ax_x,ax_y,ax_z],
+    # [bx,by,bz], [cx,cy,cz]]}. The three axis vectors are half-extents:
+    # their length equals half the piece's size along that local axis, and
+    # their direction is the local axis transformed into world space.
+    def group_obb(entity)
+      local_bounds = nil
+      if entity.respond_to?(:definition) && entity.definition.respond_to?(:bounds)
+        local_bounds = entity.definition.bounds
+      end
+      if local_bounds.nil? || (local_bounds.respond_to?(:empty?) && local_bounds.empty?)
+        b = entity.bounds
+        return aabb_to_obb(b.min, b.max)
+      end
+      t = entity.respond_to?(:transformation) ? entity.transformation : Geom::Transformation.new
+      transform_local_aabb_to_obb(local_bounds.min, local_bounds.max, t)
+    end
+
+    # Pure: build an OBB hash from a degenerate identity-transform AABB. Used
+    # for groups without definition bounds — the OBB axes are world X/Y/Z.
+    def aabb_to_obb(min, max)
+      cx = (min.x.to_f + max.x.to_f) / 2.0
+      cy = (min.y.to_f + max.y.to_f) / 2.0
+      cz = (min.z.to_f + max.z.to_f) / 2.0
+      hx = (max.x.to_f - min.x.to_f) / 2.0
+      hy = (max.y.to_f - min.y.to_f) / 2.0
+      hz = (max.z.to_f - min.z.to_f) / 2.0
+      { center: [cx, cy, cz], axes: [[hx, 0.0, 0.0], [0.0, hy, 0.0], [0.0, 0.0, hz]] }
+    end
+
+    # Touches Sketchup::Transformation API. Composes the world-space center
+    # by transforming the local-frame center point, and the three half-extent
+    # vectors by transforming the local-frame axis vectors (no translation,
+    # so length encodes scale × half-extent).
+    def transform_local_aabb_to_obb(local_min, local_max, transformation)
+      cx = (local_min.x.to_f + local_max.x.to_f) / 2.0
+      cy = (local_min.y.to_f + local_max.y.to_f) / 2.0
+      cz = (local_min.z.to_f + local_max.z.to_f) / 2.0
+      hx = (local_max.x.to_f - local_min.x.to_f) / 2.0
+      hy = (local_max.y.to_f - local_min.y.to_f) / 2.0
+      hz = (local_max.z.to_f - local_min.z.to_f) / 2.0
+      center_world = Geom::Point3d.new(cx, cy, cz).transform(transformation)
+      ax = Geom::Vector3d.new(hx, 0, 0).transform(transformation)
+      ay = Geom::Vector3d.new(0, hy, 0).transform(transformation)
+      az = Geom::Vector3d.new(0, 0, hz).transform(transformation)
+      {
+        center: [center_world.x.to_f, center_world.y.to_f, center_world.z.to_f],
+        axes: [
+          [ax.x.to_f, ax.y.to_f, ax.z.to_f],
+          [ay.x.to_f, ay.y.to_f, ay.z.to_f],
+          [az.x.to_f, az.y.to_f, az.z.to_f]
+        ]
+      }
+    end
+
+    # Pure: SAT-based oriented-box overlap depth. Each OBB is a center plus
+    # three half-extent vectors (their length is the half-width along that
+    # axis; direction is the world-space axis). Returns the minimum overlap
+    # across the 15 candidate separating axes (3 from A, 3 from B, 9 cross
+    # products): positive = boxes interpenetrate by that amount, ≤ 0 = the
+    # axis with that gap proves them separated.
+    #
+    # Cross-product axes whose magnitude squared is below OBB_AXIS_EPS are
+    # skipped — they appear when an A-axis is nearly parallel to a B-axis,
+    # in which case the SAT result is already covered by one of the box axes.
+    def obb_overlap_depth(a_center, a_axes, b_center, b_axes)
+      d = [b_center[0] - a_center[0], b_center[1] - a_center[1], b_center[2] - a_center[2]]
+      candidates = []
+      a_axes.each do |v|
+        u = vec_unit(v)
+        candidates << u unless u.nil?
+      end
+      b_axes.each do |v|
+        u = vec_unit(v)
+        candidates << u unless u.nil?
+      end
+      a_axes.each do |va|
+        b_axes.each do |vb|
+          c = vec_cross(va, vb)
+          u = vec_unit(c)
+          candidates << u unless u.nil?
+        end
+      end
+      min_overlap = Float::INFINITY
+      candidates.each do |n|
+        r_a = a_axes.inject(0.0) { |s, ax| s + vec_dot(ax, n).abs }
+        r_b = b_axes.inject(0.0) { |s, ax| s + vec_dot(ax, n).abs }
+        sep = vec_dot(d, n).abs
+        overlap = r_a + r_b - sep
+        return overlap if overlap < 0
+        min_overlap = overlap if overlap < min_overlap
+      end
+      min_overlap
+    end
+
+    # Cross-product axes below this squared magnitude are treated as
+    # numerically zero — projecting onto them is meaningless and the box-
+    # axis candidates already cover the same separating direction.
+    OBB_AXIS_EPS_SQ = 1.0e-12
+
+    def vec_cross(a, b)
+      [a[1] * b[2] - a[2] * b[1],
+       a[2] * b[0] - a[0] * b[2],
+       a[0] * b[1] - a[1] * b[0]]
+    end
+
+    def vec_dot(a, b)
+      a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+    end
+
+    def vec_unit(v)
+      mag_sq = v[0] * v[0] + v[1] * v[1] + v[2] * v[2]
+      return nil if mag_sq < OBB_AXIS_EPS_SQ
+      m = Math.sqrt(mag_sq)
+      [v[0] / m, v[1] / m, v[2] / m]
     end
 
     # Pure: per-axis penetration depth between two AABBs. A negative or

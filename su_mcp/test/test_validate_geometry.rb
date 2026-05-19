@@ -188,6 +188,105 @@ class TestValidateGeometryAABBOverlap < Minitest::Test
   end
 end
 
+class TestValidateGeometryOBBOverlap < Minitest::Test
+  def setup; @server = TestServer.new; end
+
+  # When both boxes are axis-aligned at the origin, OBB SAT reduces to AABB
+  # penetration along a single axis — sanity-check the trivial case.
+  def test_axis_aligned_full_overlap_returns_min_extent
+    a_center = [0.0, 0.0, 0.0]
+    a_axes = [[5.0, 0, 0], [0, 5.0, 0], [0, 0, 5.0]]
+    b_center = [4.0, 0.0, 0.0]
+    b_axes = [[5.0, 0, 0], [0, 5.0, 0], [0, 0, 5.0]]
+    d = @server.send(:obb_overlap_depth, a_center, a_axes, b_center, b_axes)
+    # Boxes span [-5,5] and [-1,9] on X — overlap on X is 6, full overlap on Y/Z.
+    assert_in_delta 6.0, d, 1e-9
+  end
+
+  def test_axis_aligned_separated_returns_negative
+    a_center = [0.0, 0.0, 0.0]
+    a_axes = [[1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]]
+    b_center = [10.0, 0.0, 0.0]
+    b_axes = [[1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]]
+    d = @server.send(:obb_overlap_depth, a_center, a_axes, b_center, b_axes)
+    assert d < 0, "expected separated, got depth #{d}"
+  end
+
+  def test_axis_aligned_touching_returns_zero
+    a_center = [0.0, 0.0, 0.0]
+    a_axes = [[1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]]
+    b_center = [2.0, 0.0, 0.0]
+    b_axes = [[1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]]
+    d = @server.send(:obb_overlap_depth, a_center, a_axes, b_center, b_axes)
+    assert_in_delta 0.0, d, 1e-9
+  end
+
+  # Regression for the issue: a rotated box can have an AABB that overlaps
+  # an axis-aligned neighbor's AABB while the actual oriented boxes are
+  # cleanly separated. AABB mode would report overlap; OBB mode must not.
+  def test_rotated_box_separated_when_aabbs_overlap
+    # A: unit cube at origin (axis-aligned). Occupies [-1, 1]^3.
+    a_center = [0.0, 0.0, 0.0]
+    a_axes = [[1.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]]
+    # B: 1×1×1 cube (half-extent 0.5) rotated 45° about Z, centered at
+    # (1.5, 1.5, 0). Its AABB on X and Y is [1.5 - √2/2, 1.5 + √2/2] ≈
+    # [0.793, 2.207], which overlaps A's [-1, 1] on both axes by ~0.207.
+    # But B's diamond's nearest point to A's corner (1,1) is ≈ (1.146,
+    # 1.146) — outside A. So the OBBs are separated even though the AABBs
+    # are not.
+    s = Math.sqrt(2) / 2.0
+    half = 0.5
+    b_center = [1.5, 1.5, 0.0]
+    b_axes = [[half * s, half * s, 0], [-half * s, half * s, 0], [0, 0, half]]
+
+    # Sanity: AABBs do overlap on every axis (the AABB check would flag).
+    aabb_half_x = (b_axes[0][0]).abs + (b_axes[1][0]).abs + (b_axes[2][0]).abs
+    aabb_x_min_b = b_center[0] - aabb_half_x
+    assert aabb_x_min_b < 1.0,
+           "test setup broken: B's AABB does not overlap A on X (#{aabb_x_min_b})"
+
+    d = @server.send(:obb_overlap_depth, a_center, a_axes, b_center, b_axes)
+    assert d < 0, "expected OBB-separated despite AABB overlap, got depth #{d}"
+  end
+
+  # Cross-product axes from near-parallel boxes degenerate to zero; the
+  # helper should skip them rather than divide-by-zero.
+  def test_parallel_boxes_skip_degenerate_cross_axes
+    a_center = [0.0, 0.0, 0.0]
+    a_axes = [[2.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]]
+    b_center = [10.0, 0.0, 0.0]
+    b_axes = [[2.0, 0, 0], [0, 1.0, 0], [0, 0, 1.0]]
+    # Parallel — every a_i × b_j is zero. Must return a finite negative
+    # value from a box axis, not NaN.
+    d = @server.send(:obb_overlap_depth, a_center, a_axes, b_center, b_axes)
+    assert d.finite?, "expected finite depth, got #{d}"
+    assert d < 0
+  end
+end
+
+class TestValidateGeometryAABBToOBB < Minitest::Test
+  include ValidateGeometryTestSupport
+
+  def setup; @server = TestServer.new; end
+  def pt(*args); ValidateGeometryTestSupport.pt(*args); end
+
+  def test_aabb_to_obb_returns_axis_aligned_box
+    min = pt(-1.0, -2.0, -3.0)
+    max = pt(1.0, 2.0, 3.0)
+    obb = @server.send(:aabb_to_obb, min, max)
+    assert_equal [0.0, 0.0, 0.0], obb[:center]
+    assert_equal [[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0]], obb[:axes]
+  end
+
+  def test_aabb_to_obb_handles_nonzero_center
+    min = pt(10.0, 20.0, 30.0)
+    max = pt(14.0, 22.0, 36.0)
+    obb = @server.send(:aabb_to_obb, min, max)
+    assert_equal [12.0, 21.0, 33.0], obb[:center]
+    assert_equal [[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 3.0]], obb[:axes]
+  end
+end
+
 class TestValidateGeometryFormatters < Minitest::Test
   def setup; @server = TestServer.new; end
 

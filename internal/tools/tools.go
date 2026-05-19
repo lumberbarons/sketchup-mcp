@@ -673,9 +673,19 @@ Kinds:
   All targets must share the same coordinate on the named axis/side.
   When value is given, the shared coordinate must equal it within tolerance.
 
-- {kind:"no_overlap", targets:[...], tolerance?}
+- {kind:"no_overlap", targets:[...], mode?, tolerance?}
   No two listed groups may have overlapping interiors. Penetration up to
-  tolerance on every axis is treated as a tight joint, not an overlap.
+  tolerance is treated as a tight joint, not an overlap.
+  mode is "aabb" (default) or "obb". AABB compares each group's axis-aligned
+  bounding box in world space — fast and tight for orthogonal stick framing
+  (studs, plates, joists). OBB uses each group's local-frame AABB rotated
+  into world space — needed for sloped or rotated pieces where the AABB is
+  much larger than the actual solid (e.g. a 2×6 rafter on a 6:12 slope, or a
+  lookout cut to sit flush against a sloped surface). OBB still treats
+  internal notches / voids as solid, so it doesn't fix every case — but it
+  removes false positives where the AABBs of two cleanly-touching sloped
+  pieces overlap. Picking the right mode is a tradeoff: AABB is the right
+  default; switch to OBB when targets include rotated/sloped solids.
 
 Returns {results: [...], failed: <int>} where each result is
 {name, kind, passed, detail}. detail is short on pass and includes the
