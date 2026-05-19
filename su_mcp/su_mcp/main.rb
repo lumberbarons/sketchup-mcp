@@ -1660,27 +1660,41 @@ module SU_MCP
       { center: [cx, cy, cz], axes: [[hx, 0.0, 0.0], [0.0, hy, 0.0], [0.0, 0.0, hz]] }
     end
 
-    # Touches Sketchup::Transformation API. Composes the world-space center
-    # by transforming the local-frame center point, and the three half-extent
-    # vectors by transforming the local-frame axis vectors (no translation,
-    # so length encodes scale × half-extent).
+    # Touches Sketchup::Transformation API. Extracts the column-major 4×4
+    # matrix and delegates the actual composition to the pure helper, so
+    # the math is testable without a live SketchUp.
     def transform_local_aabb_to_obb(local_min, local_max, transformation)
-      cx = (local_min.x.to_f + local_max.x.to_f) / 2.0
-      cy = (local_min.y.to_f + local_max.y.to_f) / 2.0
-      cz = (local_min.z.to_f + local_max.z.to_f) / 2.0
-      hx = (local_max.x.to_f - local_min.x.to_f) / 2.0
-      hy = (local_max.y.to_f - local_min.y.to_f) / 2.0
-      hz = (local_max.z.to_f - local_min.z.to_f) / 2.0
-      center_world = Geom::Point3d.new(cx, cy, cz).transform(transformation)
-      ax = Geom::Vector3d.new(hx, 0, 0).transform(transformation)
-      ay = Geom::Vector3d.new(0, hy, 0).transform(transformation)
-      az = Geom::Vector3d.new(0, 0, hz).transform(transformation)
+      compute_obb_from_local_aabb(
+        [local_min.x.to_f, local_min.y.to_f, local_min.z.to_f],
+        [local_max.x.to_f, local_max.y.to_f, local_max.z.to_f],
+        transformation.to_a
+      )
+    end
+
+    # Pure: world-space OBB from a local-frame AABB and a column-major 4×4
+    # transformation matrix (16 floats). The matrix's first three columns
+    # carry the world-space images of the local X/Y/Z basis vectors
+    # (scaled if the group is scaled); the fourth column is translation.
+    # World half-extent vector along local X is just basis_X · half_x, and
+    # similarly for Y/Z — so each output axis is one matrix column scaled
+    # by the half-width along that local axis.
+    def compute_obb_from_local_aabb(local_min, local_max, m)
+      cx = (local_min[0] + local_max[0]) / 2.0
+      cy = (local_min[1] + local_max[1]) / 2.0
+      cz = (local_min[2] + local_max[2]) / 2.0
+      hx = (local_max[0] - local_min[0]) / 2.0
+      hy = (local_max[1] - local_min[1]) / 2.0
+      hz = (local_max[2] - local_min[2]) / 2.0
       {
-        center: [center_world.x.to_f, center_world.y.to_f, center_world.z.to_f],
+        center: [
+          m[0] * cx + m[4] * cy + m[8]  * cz + m[12],
+          m[1] * cx + m[5] * cy + m[9]  * cz + m[13],
+          m[2] * cx + m[6] * cy + m[10] * cz + m[14]
+        ],
         axes: [
-          [ax.x.to_f, ax.y.to_f, ax.z.to_f],
-          [ay.x.to_f, ay.y.to_f, ay.z.to_f],
-          [az.x.to_f, az.y.to_f, az.z.to_f]
+          [m[0] * hx, m[1] * hx, m[2]  * hx],
+          [m[4] * hy, m[5] * hy, m[6]  * hy],
+          [m[8] * hz, m[9] * hz, m[10] * hz]
         ]
       }
     end
@@ -1824,6 +1838,14 @@ module SU_MCP
     # normal. Each sample is in the body's material by construction —
     # unlike AABB-center sampling, which fails for solids with cavities
     # carved at their geometric center (the nested-cavity case).
+    #
+    # Assumes triangle vertex order encodes outward normals (right-hand
+    # rule), which is what world_triangles_for_group produces for a
+    # consistently-oriented group. A piece with all faces reversed via
+    # SketchUp's "Reverse Faces" would step *out* of the solid; in that
+    # case every sample lands outside and overlap is silently downgraded
+    # to contact. The 8-sample redundancy doesn't save a systematically-
+    # flipped piece — fix the model's orientation in that case.
     def interior_sample_points(triangles)
       return [] if triangles.empty?
       pts = []

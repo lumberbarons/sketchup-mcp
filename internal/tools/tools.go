@@ -684,8 +684,18 @@ Kinds:
   lookout cut to sit flush against a sloped surface). OBB still treats
   internal notches / voids as solid, so it doesn't fix every case — but it
   removes false positives where the AABBs of two cleanly-touching sloped
-  pieces overlap. Picking the right mode is a tradeoff: AABB is the right
-  default; switch to OBB when targets include rotated/sloped solids.
+  pieces overlap.
+
+  Prerequisite for OBB to "win" over AABB: the group must be modeled in a
+  canonical local frame (e.g. a horizontal rafter as a 1.5×72×5.5 box) and
+  rotated into place via its transformation. For groups whose slope is
+  baked into the geometry itself (built with the slope already applied via
+  create_extrusion's sloped profile), the local-frame AABB equals the
+  world AABB and OBB collapses to AABB — no improvement. For those models,
+  use closest_points (which is volume-aware via a point-in-solid parity
+  check) as the regression-quality verifier instead. Picking the right
+  mode is a tradeoff: AABB is the right default; switch to OBB when
+  targets include rotated/sloped solids modeled in their local frame.
 
 Returns {results: [...], failed: <int>} where each result is
 {name, kind, passed, detail}. detail is short on pass and includes the

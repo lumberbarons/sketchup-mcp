@@ -287,6 +287,123 @@ class TestValidateGeometryAABBToOBB < Minitest::Test
   end
 end
 
+# Tests for compute_obb_from_local_aabb — pins the transformation-driven
+# OBB composition that group_obb depends on for sloped framing. Uses
+# synthetic 16-elem column-major 4×4 matrices to stand in for
+# Geom::Transformation#to_a, so no live SketchUp is needed.
+class TestValidateGeometryComputeOBBFromMatrix < Minitest::Test
+  def setup; @server = TestServer.new; end
+
+  IDENTITY = [
+    1.0, 0.0, 0.0, 0.0,
+    0.0, 1.0, 0.0, 0.0,
+    0.0, 0.0, 1.0, 0.0,
+    0.0, 0.0, 0.0, 1.0
+  ].freeze
+
+  def call(local_min, local_max, m)
+    @server.send(:compute_obb_from_local_aabb, local_min, local_max, m)
+  end
+
+  def test_identity_matrix_returns_aabb_unchanged
+    obb = call([-1.0, -2.0, -3.0], [1.0, 2.0, 3.0], IDENTITY)
+    assert_equal [0.0, 0.0, 0.0], obb[:center]
+    assert_equal [[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0]], obb[:axes]
+  end
+
+  def test_translation_only_shifts_center_not_axes
+    # Translation column [10, 20, 30] in the 13/14/15 slots.
+    m = IDENTITY.dup
+    m[12], m[13], m[14] = 10.0, 20.0, 30.0
+    obb = call([-1.0, -1.0, -1.0], [1.0, 1.0, 1.0], m)
+    assert_equal [10.0, 20.0, 30.0], obb[:center]
+    assert_equal [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], obb[:axes]
+  end
+
+  # Regression: a piece modeled as a 1.5×72×5.5 box on the X axis and
+  # rotated 45° about Z (an in-between slope for clarity) must surface
+  # with rotated half-extent vectors. This is exactly the case OBB mode
+  # is meant to handle — a sloped rafter modeled in local frame.
+  def test_z_rotation_45_rotates_axes_into_world_frame
+    s = Math.sqrt(2) / 2.0
+    # Column-major: first column = rotated X axis (s, s, 0); second column
+    # = rotated Y axis (-s, s, 0); third column = Z axis (0, 0, 1).
+    m = [
+      s, s, 0.0, 0.0,
+      -s, s, 0.0, 0.0,
+      0.0, 0.0, 1.0, 0.0,
+      0.0, 0.0, 0.0, 1.0
+    ]
+    # Local AABB: 2×2×2 box at origin.
+    obb = call([-1.0, -1.0, -1.0], [1.0, 1.0, 1.0], m)
+    assert_in_delta 0.0, obb[:center][0], 1e-12
+    assert_in_delta 0.0, obb[:center][1], 1e-12
+    assert_in_delta 0.0, obb[:center][2], 1e-12
+    # Half-extent along local X (length 1) becomes (s, s, 0) in world.
+    assert_in_delta s, obb[:axes][0][0], 1e-12
+    assert_in_delta s, obb[:axes][0][1], 1e-12
+    assert_in_delta 0.0, obb[:axes][0][2], 1e-12
+    # Local Y becomes (-s, s, 0).
+    assert_in_delta -s, obb[:axes][1][0], 1e-12
+    assert_in_delta s, obb[:axes][1][1], 1e-12
+    # Local Z is unchanged.
+    assert_equal [0.0, 0.0, 1.0], obb[:axes][2]
+  end
+
+  # Combining rotation + translation: a 2×2×2 box rotated 45° about Z and
+  # placed at (5, 0, 0). World OBB must have the rotated axes and the
+  # translated center.
+  def test_rotation_plus_translation_composes_correctly
+    s = Math.sqrt(2) / 2.0
+    m = [
+      s, s, 0.0, 0.0,
+      -s, s, 0.0, 0.0,
+      0.0, 0.0, 1.0, 0.0,
+      5.0, 0.0, 0.0, 1.0
+    ]
+    obb = call([-1.0, -1.0, -1.0], [1.0, 1.0, 1.0], m)
+    assert_in_delta 5.0, obb[:center][0], 1e-12
+    assert_in_delta 0.0, obb[:center][1], 1e-12
+    assert_in_delta s, obb[:axes][0][0], 1e-12
+    assert_in_delta s, obb[:axes][0][1], 1e-12
+  end
+
+  # Scale baked into the basis columns: a uniform 2× scale doubles the
+  # half-extent vector magnitudes, since each axis is one matrix column
+  # scaled by the local half-extent.
+  def test_uniform_scale_in_basis_doubles_axis_lengths
+    m = [
+      2.0, 0.0, 0.0, 0.0,
+      0.0, 2.0, 0.0, 0.0,
+      0.0, 0.0, 2.0, 0.0,
+      0.0, 0.0, 0.0, 1.0
+    ]
+    obb = call([-1.0, -1.0, -1.0], [1.0, 1.0, 1.0], m)
+    assert_equal [[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]], obb[:axes]
+  end
+
+  # Non-symmetric local AABB (e.g. a rafter modeled 1.5×72×5.5 on local X):
+  # rotating the long X axis into a slope must produce a long world-space
+  # X half-extent vector pointing along the slope.
+  def test_non_unit_local_extents_scale_each_basis_column
+    s = Math.sqrt(2) / 2.0
+    m = [
+      s, s, 0.0, 0.0,
+      -s, s, 0.0, 0.0,
+      0.0, 0.0, 1.0, 0.0,
+      0.0, 0.0, 0.0, 1.0
+    ]
+    # Rafter-shaped local AABB: long along X, short on Y/Z.
+    obb = call([-36.0, -0.75, -2.75], [36.0, 0.75, 2.75], m)
+    # Half-extent vector along local X (length 36) rotated into world:
+    # 36 × (s, s, 0) = (36s, 36s, 0).
+    assert_in_delta 36.0 * s, obb[:axes][0][0], 1e-9
+    assert_in_delta 36.0 * s, obb[:axes][0][1], 1e-9
+    # Z half-extent unchanged at 2.75.
+    assert_equal [0.0, 0.0, 2.75], obb[:axes][2]
+  end
+end
+
 class TestValidateGeometryFormatters < Minitest::Test
   def setup; @server = TestServer.new; end
 
