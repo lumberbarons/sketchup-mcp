@@ -304,3 +304,147 @@ class TestClosestPointsSearch < Minitest::Test
     assert_equal 1, out[:face_a_id]
   end
 end
+
+# Cube-mesh fixture for point-in-solid parity tests. Triangles are wound so
+# face normals point outward — what world_triangles_for_group produces for a
+# manifold group with consistent face orientation.
+module CubeMeshFixture
+  CORNER_BITS = [
+    [-1, -1, -1], [-1, -1,  1], [-1,  1, -1], [-1,  1,  1],
+    [ 1, -1, -1], [ 1, -1,  1], [ 1,  1, -1], [ 1,  1,  1]
+  ].freeze
+  # [v0, v1, v2, v3] in CCW order viewed from outside the cube.
+  FACE_QUADS = [
+    [4, 6, 7, 5],  # +X
+    [0, 1, 3, 2],  # -X
+    [2, 3, 7, 6],  # +Y
+    [0, 4, 5, 1],  # -Y
+    [1, 5, 7, 3],  # +Z
+    [0, 2, 6, 4]   # -Z
+  ].freeze
+
+  def self.cube(cx:, cy:, cz:, hx:, hy:, hz:, face_id_base: 100)
+    corners = CORNER_BITS.map do |sx, sy, sz|
+      [cx + sx * hx, cy + sy * hy, cz + sz * hz]
+    end
+    tris = []
+    FACE_QUADS.each_with_index do |(a, b, c, d), idx|
+      fid = face_id_base + idx
+      tris << { points: [corners[a], corners[b], corners[c]], face_id: fid }
+      tris << { points: [corners[a], corners[c], corners[d]], face_id: fid }
+    end
+    tris
+  end
+end
+
+class TestRayTriangleIntersect < Minitest::Test
+  def setup; @server = TestServer.new; end
+
+  TRI = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]].freeze
+
+  def test_ray_hits_through_triangle_interior
+    assert @server.send(:ray_intersects_triangle?, [0.25, 0.25, -1.0], [0.0, 0.0, 1.0], TRI)
+  end
+
+  def test_ray_misses_off_to_one_side
+    refute @server.send(:ray_intersects_triangle?, [2.0, 2.0, -1.0], [0.0, 0.0, 1.0], TRI)
+  end
+
+  def test_ray_parallel_to_triangle_plane_is_miss
+    refute @server.send(:ray_intersects_triangle?, [0.25, 0.25, 1.0], [1.0, 0.0, 0.0], TRI)
+  end
+
+  def test_ray_pointing_away_from_triangle_is_miss
+    # Origin above triangle, ray pointing further up — no forward hit.
+    refute @server.send(:ray_intersects_triangle?, [0.25, 0.25, 1.0], [0.0, 0.0, 1.0], TRI)
+  end
+
+  def test_origin_exactly_on_triangle_is_excluded
+    # Excluded so a sample point sitting on a face doesn't count itself.
+    refute @server.send(:ray_intersects_triangle?, [0.25, 0.25, 0.0], [0.0, 0.0, 1.0], TRI)
+  end
+end
+
+class TestPointInSolid < Minitest::Test
+  def setup; @server = TestServer.new; end
+
+  def cube(**kw); CubeMeshFixture.cube(**kw); end
+
+  def test_center_of_cube_is_inside
+    tris = cube(cx: 0.0, cy: 0.0, cz: 0.0, hx: 1.0, hy: 1.0, hz: 1.0)
+    assert @server.send(:point_in_solid?, [0.0, 0.0, 0.0], tris)
+  end
+
+  def test_point_far_outside_cube_is_outside
+    tris = cube(cx: 0.0, cy: 0.0, cz: 0.0, hx: 1.0, hy: 1.0, hz: 1.0)
+    refute @server.send(:point_in_solid?, [5.0, 0.0, 0.0], tris)
+  end
+
+  def test_point_just_outside_face_is_outside
+    tris = cube(cx: 0.0, cy: 0.0, cz: 0.0, hx: 1.0, hy: 1.0, hz: 1.0)
+    refute @server.send(:point_in_solid?, [1.001, 0.0, 0.0], tris)
+  end
+
+  def test_point_inside_offset_cube
+    tris = cube(cx: 10.0, cy: 20.0, cz: 30.0, hx: 0.5, hy: 0.5, hz: 0.5)
+    assert @server.send(:point_in_solid?, [10.1, 20.0, 30.0], tris)
+    refute @server.send(:point_in_solid?, [0.0, 0.0, 0.0], tris)
+  end
+end
+
+class TestVolumesActuallyIntersect < Minitest::Test
+  def setup; @server = TestServer.new; end
+
+  def cube(**kw); CubeMeshFixture.cube(**kw); end
+
+  # Two AABBs that share a face but no volume — the standard "stacked block"
+  # contact case. Must not register as a volume intersection.
+  def test_face_to_face_touching_cubes_have_disjoint_volumes
+    a_tris = cube(cx: 0.0, cy: 0.0, cz: 0.0, hx: 1.0, hy: 1.0, hz: 1.0, face_id_base: 100)
+    b_tris = cube(cx: 2.0, cy: 0.0, cz: 0.0, hx: 1.0, hy: 1.0, hz: 1.0, face_id_base: 200)
+    refute @server.send(:volumes_actually_intersect?, a_tris, b_tris)
+  end
+
+  # Two cubes that genuinely interpenetrate must register as intersecting.
+  def test_interpenetrating_cubes_intersect
+    a_tris = cube(cx: 0.0, cy: 0.0, cz: 0.0, hx: 1.0, hy: 1.0, hz: 1.0, face_id_base: 100)
+    b_tris = cube(cx: 1.0, cy: 0.0, cz: 0.0, hx: 1.0, hy: 1.0, hz: 1.0, face_id_base: 200)
+    assert @server.send(:volumes_actually_intersect?, a_tris, b_tris)
+  end
+
+  # A small cube fully embedded in a larger cube's solid material is a real
+  # interpenetration. Must register.
+  def test_embedded_cube_in_larger_solid_intersects
+    inner_tris = cube(cx: 0.0, cy: 0.0, cz: 0.0, hx: 0.5, hy: 0.5, hz: 0.5, face_id_base: 100)
+    outer_tris = cube(cx: 0.0, cy: 0.0, cz: 0.0, hx: 2.0, hy: 2.0, hz: 2.0, face_id_base: 200)
+    assert @server.send(:volumes_actually_intersect?, inner_tris, outer_tris)
+  end
+
+  # Regression for sch-jha: a part sitting cleanly in a cavity carved into
+  # a host. The host's mesh is the outer wall (normals outward) + the
+  # cavity walls (normals pointing INTO the cavity = away from host material).
+  # The inner part's body occupies the cavity; surfaces are coincident but
+  # the part's material is in the cavity-void, not in the host's solid.
+  # volumes_actually_intersect? must say false.
+  def test_part_in_cavity_does_not_intersect
+    # Inner part: 1×1×1 cube at origin (half-extent 0.5).
+    part_tris = cube(cx: 0.0, cy: 0.0, cz: 0.0, hx: 0.5, hy: 0.5, hz: 0.5, face_id_base: 100)
+
+    # Host: outer 4×4×4 cube around origin (half-extent 2.0), with a 1×1×1
+    # cavity at origin matching the part. Cavity walls are the same cube
+    # as the part with reversed winding (b/c swap) — that flips each
+    # triangle's normal so it points INTO the cavity rather than outward
+    # from the part. Together with the outer cube this forms a closed
+    # shell whose "inside" is the donut between the outer wall and the
+    # cavity wall.
+    host_outer = cube(cx: 0.0, cy: 0.0, cz: 0.0, hx: 2.0, hy: 2.0, hz: 2.0, face_id_base: 200)
+    cavity_walls = cube(cx: 0.0, cy: 0.0, cz: 0.0, hx: 0.5, hy: 0.5, hz: 0.5, face_id_base: 300).map do |t|
+      a, b, c = t[:points]
+      { points: [a, c, b], face_id: t[:face_id] }
+    end
+    host_tris = host_outer + cavity_walls
+
+    refute @server.send(:volumes_actually_intersect?, part_tris, host_tris),
+           "part in cavity must not register as a volume intersection"
+  end
+end

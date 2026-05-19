@@ -830,6 +830,12 @@ tolerance: optional inches; a surface gap within tolerance is reported as
   - distance <= tolerance, no interior → "contact"
   - interiors penetrate                → "overlap" (distance returned negative)
 
+Nested-cavity geometry (tenon in mortise, dowel in hole, lookout in notch,
+drawer fully seated in a carcass) is classified as "contact": the surfaces
+are coincident but the solid volumes are disjoint. The classifier verifies
+this with a point-in-solid parity test on a small set of interior samples
+before reporting overlap, so a clean cavity fit doesn't false-positive.
+
 Returns {distance, point_a:[x,y,z], point_b:[x,y,z], status, face_a_id,
 face_b_id}. distance is signed: positive for a gap, 0 for a tight
 contact, negative for penetration. On overlap the magnitude is the

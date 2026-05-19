@@ -1747,6 +1747,114 @@ module SU_MCP
       [v[0] / m, v[1] / m, v[2] / m]
     end
 
+    # Offset distance (inches) when stepping inward from a face centroid to
+    # land an interior sample. 0.001" is well below SketchUp's 1/16" modeling
+    # tolerance — small enough to stay inside even a thin sliver — but large
+    # enough that the parity test isn't fooled by the face it just stepped
+    # off of.
+    INTERIOR_SAMPLE_EPS = 1.0e-3
+
+    # Default ray direction for point-in-solid parity. Picked with small
+    # irrational offsets in Y and Z to make grazing axis-aligned edges or
+    # vertices ~impossible — those are the cases where parity can over- or
+    # under-count.
+    POINT_IN_SOLID_RAY_DIR = [1.0, Math.sqrt(2) / 100.0, Math.sqrt(3) / 200.0].freeze
+
+    # Pure: triangle centroid as [x,y,z].
+    def triangle_centroid(pts)
+      [(pts[0][0] + pts[1][0] + pts[2][0]) / 3.0,
+       (pts[0][1] + pts[1][1] + pts[2][1]) / 3.0,
+       (pts[0][2] + pts[1][2] + pts[2][2]) / 3.0]
+    end
+
+    # Pure: unit normal of a triangle (right-hand rule from vertex order).
+    # Returns nil for a degenerate (collinear) triangle.
+    def triangle_normal(pts)
+      e1 = [pts[1][0] - pts[0][0], pts[1][1] - pts[0][1], pts[1][2] - pts[0][2]]
+      e2 = [pts[2][0] - pts[0][0], pts[2][1] - pts[0][1], pts[2][2] - pts[0][2]]
+      vec_unit(vec_cross(e1, e2))
+    end
+
+    # Pure: Möller–Trumbore ray/triangle intersection. dir need not be unit.
+    # Returns true iff the ray strikes the triangle strictly in front of the
+    # origin. Hits exactly at the origin (t≈0) are excluded so an interior
+    # sample point that started on or near a face doesn't count itself.
+    def ray_intersects_triangle?(origin, dir, tri)
+      v0, v1, v2 = tri
+      e1 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]]
+      e2 = [v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]]
+      h = vec_cross(dir, e2)
+      a = vec_dot(e1, h)
+      return false if a.abs < 1.0e-12
+      f = 1.0 / a
+      s = [origin[0] - v0[0], origin[1] - v0[1], origin[2] - v0[2]]
+      u = f * vec_dot(s, h)
+      return false if u < 0.0 || u > 1.0
+      q = vec_cross(s, e1)
+      v = f * vec_dot(dir, q)
+      return false if v < 0.0 || u + v > 1.0
+      t = f * vec_dot(e2, q)
+      t > 1.0e-9
+    end
+
+    # Pure: point-in-closed-solid via ray-parity. Casts a ray from `point`
+    # along `direction` (default: POINT_IN_SOLID_RAY_DIR) and counts how many
+    # of `triangles` it pierces. Odd = inside, even = outside.
+    #
+    # Assumes the triangle set forms a closed, consistently-oriented surface,
+    # which is what world_triangles_for_group produces for a manifold group.
+    # For an open / non-manifold shell, parity is ambiguous and the result
+    # is best-effort.
+    def point_in_solid?(point, triangles, direction = POINT_IN_SOLID_RAY_DIR)
+      count = 0
+      triangles.each do |t|
+        count += 1 if ray_intersects_triangle?(point, direction, t[:points])
+      end
+      count.odd?
+    end
+
+    # How many face-centroid offsets to spread across a mesh for the
+    # interior-point check. 8 keeps the parity cost trivial vs. the existing
+    # tri-pair search while giving enough coverage to catch a real overlap
+    # somewhere in the mesh even on concave / L-shaped pieces.
+    INTERIOR_SAMPLE_FACE_COUNT = 8
+
+    # Build a small set of points known to lie inside the entity's solid by
+    # stepping inward from triangle centroids along the (inward) face
+    # normal. Each sample is in the body's material by construction —
+    # unlike AABB-center sampling, which fails for solids with cavities
+    # carved at their geometric center (the nested-cavity case).
+    def interior_sample_points(triangles)
+      return [] if triangles.empty?
+      pts = []
+      step = [(triangles.length / INTERIOR_SAMPLE_FACE_COUNT.to_f).ceil, 1].max
+      triangles.each_with_index do |t, i|
+        next unless (i % step).zero?
+        n = triangle_normal(t[:points])
+        next if n.nil?
+        tc = triangle_centroid(t[:points])
+        pts << [tc[0] - INTERIOR_SAMPLE_EPS * n[0],
+                tc[1] - INTERIOR_SAMPLE_EPS * n[1],
+                tc[2] - INTERIOR_SAMPLE_EPS * n[2]]
+      end
+      pts
+    end
+
+    # True iff the two solid volumes actually share interior space. False
+    # for the nested-cavity case (one part sits in a void in the other,
+    # surfaces coincident but volumes disjoint). The AABB-strict-overlap
+    # signal alone can't tell these apart; parity-testing interior samples
+    # of each against the other's mesh can.
+    def volumes_actually_intersect?(tris_a, tris_b)
+      interior_sample_points(tris_a).each do |p|
+        return true if point_in_solid?(p, tris_b)
+      end
+      interior_sample_points(tris_b).each do |p|
+        return true if point_in_solid?(p, tris_a)
+      end
+      false
+    end
+
     # Pure: per-axis penetration depth between two AABBs. A negative or
     # zero value on any axis means the boxes are clear (or just touching) on
     # that axis. All three positive => the interiors overlap.
@@ -1991,6 +2099,15 @@ module SU_MCP
       b_bounds = ent_b.bounds
       ox, oy, oz = aabb_overlap_extents(a_bounds.min, a_bounds.max, b_bounds.min, b_bounds.max)
       status, signed_distance = closest_points_classify(best[:distance], ox, oy, oz, tol)
+      # AABB-based overlap is a false positive when one part fits cleanly
+      # inside the other's cavity (tenon-in-mortise, lookout-in-notch, drawer
+      # -in-carcass). Volume parity test downgrades to contact when the
+      # surfaces are coincident but neither solid contains an interior point
+      # of the other.
+      if status == "overlap" && !volumes_actually_intersect?(tris_a, tris_b)
+        status = "contact"
+        signed_distance = best[:distance]
+      end
 
       {
         success: true,
